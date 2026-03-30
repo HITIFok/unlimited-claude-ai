@@ -701,9 +701,10 @@ export default function ClaudeInterface() {
 
         {/* Main Content */}
         <div className="main-content">
-          <div className="content-area">
-            {!isInChat ? (
-              <div className="welcome-screen" id="welcomeScreen">
+          {/* Welcome screen - shown when no conversation is active */}
+          {!isInChat && (
+            <div className="welcome-screen" id="welcomeScreen">
+              <div className="welcome-inner">
                 <div className="greeting">
                   <svg className="sun-icon" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
@@ -789,15 +790,20 @@ export default function ClaudeInterface() {
                   ))}
                 </div>
               </div>
-            ) : (
-              <div className="chat-container active" id="chatContainer">
-                <div className="chat-messages" id="chatMessages" ref={chatMessagesRef} />
-                <div className="typing-indicator" id="typingIndicator">
-                  <div className="message-avatar"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg></div>
-                  <span>Claude is typing</span>
-                  <div className="typing-dots"><div className="typing-dot"></div><div className="typing-dot"></div><div className="typing-dot"></div></div>
-                </div>
-                <div className="search-container">
+            </div>
+          )}
+
+          {/* Chat view - shown when conversation is active */}
+          {isInChat && (
+            <div className="chat-view" id="chatContainer">
+              <div className="chat-messages" id="chatMessages" ref={chatMessagesRef} />
+              <div className="typing-indicator" id="typingIndicator">
+                <div className="message-avatar"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg></div>
+                <span>Claude is typing</span>
+                <div className="typing-dots"><div className="typing-dot"></div><div className="typing-dot"></div><div className="typing-dot"></div></div>
+              </div>
+              <div className="chat-input-area">
+                <div className="chat-input-inner">
                   {attachedFiles.length > 0 && (
                     <div className="attachments-bar">
                       {attachedFiles.map((file) => (
@@ -825,26 +831,28 @@ export default function ClaudeInterface() {
                       ))}
                     </div>
                   )}
-                  <textarea className="search-input" ref={chatInputRef} placeholder="Message Claude..." rows={1}
-                    disabled={isStreaming} onInput={(e) => autoResize(e.target as HTMLTextAreaElement)}
-                    onKeyDown={(e) => handleKeyDown(e, 'chat')} style={{ opacity: isStreaming ? 0.6 : 1 }} />
-                  <div className="search-actions">
-                    <button className="attach-btn" title="Attach files" onClick={() => fileInputRef.current?.click()}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                      </svg>
-                    </button>
-                    <button className="model-btn" onClick={toggleModel} style={{ padding: '6px 8px', fontSize: '12px' }}>
-                      <span id="chatCurrentModel">Sonnet 4</span>
-                    </button>
-                    <button className="send-btn" onClick={handleChatMessage} disabled={isStreaming} style={{ opacity: isStreaming ? 0.6 : 1 }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-                    </button>
+                  <div className="chat-input-row">
+                    <textarea className="chat-textarea" ref={chatInputRef} placeholder="Message Claude..." rows={1}
+                      disabled={isStreaming} onInput={(e) => autoResize(e.target as HTMLTextAreaElement)}
+                      onKeyDown={(e) => handleKeyDown(e, 'chat')} style={{ opacity: isStreaming ? 0.6 : 1 }} />
+                    <div className="chat-input-actions">
+                      <button className="attach-btn" title="Attach files" onClick={() => fileInputRef.current?.click()}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                        </svg>
+                      </button>
+                      <button className="model-btn" onClick={toggleModel} style={{ padding: '6px 8px', fontSize: '12px' }}>
+                        <span id="chatCurrentModel">Sonnet 4</span>
+                      </button>
+                      <button className="send-btn" onClick={handleChatMessage} disabled={isStreaming} style={{ opacity: isStreaming ? 0.6 : 1 }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -920,13 +928,18 @@ export default function ClaudeInterface() {
         .user-menu-footer { font-size: 11px !important; color: #555 !important; justify-content: center; cursor: default !important; padding: 8px !important; }
         .user-menu-footer:hover { background-color: transparent !important; color: #555 !important; }
 
-        /* Main Content */
-        .main-content { flex: 1; display: flex; flex-direction: column; background-color: #1a1a1a; min-width: 0; height: 100vh; overflow: hidden; }
-        .content-area { flex: 1; display: flex; flex-direction: column; padding: 20px; max-width: 800px; margin: 0 auto; width: 100%; position: relative; min-height: 0; overflow: hidden; }
-        .welcome-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; padding: 40px; }
-        .chat-container { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; flex-direction: column; }
-        .chat-container.active { display: flex; }
-        .chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 20px 20px; min-height: 0; scrollbar-width: thin; scrollbar-color: #404040 #262626; scroll-behavior: smooth; }
+        /* Main Content - full viewport height, no overflow */
+        .main-content { flex: 1; height: 100vh; overflow: hidden; display: flex; flex-direction: column; background-color: #1a1a1a; min-width: 0; }
+
+        /* Welcome screen - centered, scrollable if needed */
+        .welcome-screen { height: 100%; display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: 20px; }
+        .welcome-inner { max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; padding: 40px 0; }
+
+        /* Chat view - fills entire main-content, column layout */
+        .chat-view { height: 100%; display: flex; flex-direction: column; }
+
+        /* Chat messages - scrollable area */
+        .chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; min-height: 0; scrollbar-width: thin; scrollbar-color: #404040 #262626; scroll-behavior: smooth; }
         .chat-messages::-webkit-scrollbar { width: 8px; }
         .chat-messages::-webkit-scrollbar-track { background: #262626; border-radius: 4px; }
         .chat-messages::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
@@ -959,13 +972,21 @@ export default function ClaudeInterface() {
         .greeting { display: flex; align-items: center; gap: 12px; margin-bottom: 40px; font-size: 32px; font-weight: 400; color: #fff; }
         .sun-icon { width: 32px; height: 32px; color: #ff6b35; }
 
-        /* Search / Input */
+        /* Search / Input (welcome screen) */
         .search-container { width: 100%; max-width: 600px; position: relative; margin-bottom: 20px; }
-        .chat-container .search-container { position: relative; bottom: auto; background-color: #1a1a1a; padding: 10px 0 10px 0; margin: 0; max-width: none; flex-shrink: 0; }
         .search-input { width: 100%; padding: 16px 160px 16px 16px; background-color: #262626; border: 1px solid #404040; border-radius: 12px; color: #fff; font-size: 16px; outline: none; transition: border-color 0.2s; resize: none; min-height: 50px; max-height: 150px; font-family: inherit; }
         .search-input:focus { border-color: #ff6b35; }
         .search-input::placeholder { color: #808080; }
         .search-actions { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; gap: 4px; align-items: center; }
+
+        /* Chat input area - always visible at bottom */
+        .chat-input-area { flex-shrink: 0; padding: 10px 20px 20px; }
+        .chat-input-inner { max-width: 700px; margin: 0 auto; }
+        .chat-input-row { position: relative; display: flex; align-items: flex-end; gap: 8px; background-color: #262626; border: 1px solid #404040; border-radius: 12px; padding: 8px 8px 8px 16px; transition: border-color 0.2s; }
+        .chat-input-row:focus-within { border-color: #ff6b35; }
+        .chat-textarea { flex: 1; background: none; border: none; color: #fff; font-size: 16px; outline: none; resize: none; min-height: 36px; max-height: 150px; padding: 8px 0; font-family: inherit; line-height: 1.4; }
+        .chat-textarea::placeholder { color: #808080; }
+        .chat-input-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; padding-bottom: 2px; }
         .search-btn { padding: 8px; background: none; border: none; color: #808080; cursor: pointer; border-radius: 6px; transition: background-color 0.2s; font-size: 13px; }
         .search-btn:hover { background-color: #404040; }
         .attach-btn { padding: 6px; background: none; border: none; color: #808080; cursor: pointer; border-radius: 6px; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
