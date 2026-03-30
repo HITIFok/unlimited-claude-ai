@@ -921,12 +921,12 @@ export default function ClaudeInterface() {
         .user-menu-footer:hover { background-color: transparent !important; color: #555 !important; }
 
         /* Main Content */
-        .main-content { flex: 1; display: flex; flex-direction: column; background-color: #1a1a1a; min-width: 0; }
-        .content-area { flex: 1; display: flex; flex-direction: column; padding: 20px; max-width: 800px; margin: 0 auto; width: 100%; position: relative; }
+        .main-content { flex: 1; display: flex; flex-direction: column; background-color: #1a1a1a; min-width: 0; height: 100vh; overflow: hidden; }
+        .content-area { flex: 1; display: flex; flex-direction: column; padding: 20px; max-width: 800px; margin: 0 auto; width: 100%; position: relative; min-height: 0; overflow: hidden; }
         .welcome-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; padding: 40px; }
-        .chat-container { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+        .chat-container { display: none; flex-direction: column; flex: 1; min-height: 0; max-height: 100%; overflow: hidden; }
         .chat-container.active { display: flex; }
-        .chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; margin-bottom: 10px; min-height: 0; scrollbar-width: thin; scrollbar-color: #404040 #262626; scroll-behavior: smooth; }
+        .chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 12px 20px; min-height: 0; max-height: 100%; scrollbar-width: thin; scrollbar-color: #404040 #262626; scroll-behavior: smooth; }
         .chat-messages::-webkit-scrollbar { width: 8px; }
         .chat-messages::-webkit-scrollbar-track { background: #262626; border-radius: 4px; }
         .chat-messages::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
@@ -961,8 +961,7 @@ export default function ClaudeInterface() {
 
         /* Search / Input */
         .search-container { width: 100%; max-width: 600px; position: relative; margin-bottom: 20px; }
-        .chat-container .search-container { position: relative; bottom: auto; background-color: #1a1a1a; padding: 12px 0 0 0; margin: 0; max-width: none; flex-shrink: 0; }
-        .chat-container .search-actions { bottom: 18px; }
+        .chat-container .search-container { position: relative; bottom: auto; background-color: #1a1a1a; padding: 10px 0 0 0; margin: 0; max-width: none; flex-shrink: 0; }
         .search-input { width: 100%; padding: 16px 160px 16px 16px; background-color: #262626; border: 1px solid #404040; border-radius: 12px; color: #fff; font-size: 16px; outline: none; transition: border-color 0.2s; resize: none; min-height: 50px; max-height: 150px; font-family: inherit; }
         .search-input:focus { border-color: #ff6b35; }
         .search-input::placeholder { color: #808080; }
