@@ -71,8 +71,27 @@ export default function ClaudeInterface() {
       const savedPlan = localStorage.getItem('claude-user-plan');
       if (savedName) setUserName(savedName);
       if (savedPlan) setUserPlan(savedPlan);
+      // Load saved conversations
+      const savedConvs = localStorage.getItem('claude-conversations');
+      if (savedConvs) {
+        try {
+          const parsed = JSON.parse(savedConvs);
+          if (Array.isArray(parsed)) {
+            setRecentConversations(parsed);
+          }
+        } catch {}
+      }
     } catch {}
   }, []);
+
+  // Save conversations to localStorage on every change
+  useEffect(() => {
+    try {
+      if (recentConversations.length > 0) {
+        localStorage.setItem('claude-conversations', JSON.stringify(recentConversations));
+      }
+    } catch {}
+  }, [recentConversations]);
 
   // Auto-fetch Puter.js user info
   useEffect(() => {
