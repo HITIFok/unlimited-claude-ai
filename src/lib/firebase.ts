@@ -1,4 +1,4 @@
-import { initializeApp, getApps } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
@@ -11,21 +11,24 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
-  throw new Error(
-    'Firebase config is missing. Create a .env.local file with your Firebase credentials. ' +
-    'See .env.example for the required variables.'
-  );
+const isFirebaseConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
+
+// Initialize Firebase only if config is present (prevent build crashes)
+let app = null;
+let db = null;
+let auth = null;
+
+if (isFirebaseConfigured) {
+  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+  db = getFirestore(app);
+  auth = getAuth(app);
 }
 
-// Initialize Firebase (prevent re-initialization in dev mode)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-
-export const db = getFirestore(app);
-export const auth = getAuth(app);
+export { db, auth, isFirebaseConfigured };
 
 // Sign in anonymously and return the user ID
 export async function ensureAuth(): Promise<string> {
+  if (!auth) throw new Error('Firebase is not configured');
   return new Promise((resolve, reject) => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       unsub();
