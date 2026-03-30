@@ -61,6 +61,8 @@ export default function ClaudeInterface() {
   const fullResponseRef = useRef<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  // Ref to always have the latest conversation ID (avoids stale closure in async functions)
+  const currentConversationIdRef = useRef<string | null>(null);
 
   // Load saved data
   useEffect(() => {
@@ -136,14 +138,16 @@ export default function ClaudeInterface() {
     const conversation: Conversation = { id, title, messages: [], timestamp: new Date(), model: currentModel };
     setRecentConversations(prev => [conversation, ...prev].slice(0, 20));
     setCurrentConversationId(id);
+    currentConversationIdRef.current = id;
   }, [currentModel]);
 
   const updateCurrentConversation = useCallback((messages: Message[]) => {
-    if (!currentConversationId) return;
+    const convId = currentConversationIdRef.current;
+    if (!convId) return;
     setRecentConversations(prev => prev.map(conv =>
-      conv.id === currentConversationId ? { ...conv, messages: [...messages], timestamp: new Date() } : conv
+      conv.id === convId ? { ...conv, messages: [...messages], timestamp: new Date() } : conv
     ));
-  }, [currentConversationId]);
+  }, []);
 
   const deleteConversation = useCallback((convId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -156,6 +160,7 @@ export default function ClaudeInterface() {
   const startNewChat = useCallback(() => {
     setChatHistory([]);
     setCurrentConversationId(null);
+    currentConversationIdRef.current = null;
     setCurrentModel(availableModels[0].apiName);
     setAttachedFiles([]);
     if (welcomeInputRef.current) { welcomeInputRef.current.value = ''; autoResize(welcomeInputRef.current); welcomeInputRef.current.focus(); }
@@ -166,6 +171,7 @@ export default function ClaudeInterface() {
     const conversation = recentConversations.find(conv => conv.id === conversationId);
     if (!conversation) return;
     setCurrentConversationId(conversationId);
+    currentConversationIdRef.current = conversationId;
     setChatHistory([...conversation.messages]);
     setCurrentModel(conversation.model);
     setAttachedFiles([]);
@@ -918,9 +924,9 @@ export default function ClaudeInterface() {
         .main-content { flex: 1; display: flex; flex-direction: column; background-color: #1a1a1a; min-width: 0; }
         .content-area { flex: 1; display: flex; flex-direction: column; padding: 20px; max-width: 800px; margin: 0 auto; width: 100%; position: relative; }
         .welcome-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; padding: 40px; }
-        .chat-container { display: none; flex-direction: column; height: 100vh; max-height: 100vh; overflow: hidden; }
+        .chat-container { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
         .chat-container.active { display: flex; }
-        .chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; margin-bottom: 20px; height: calc(100vh - 200px); min-height: 0; scrollbar-width: thin; scrollbar-color: #404040 #262626; scroll-behavior: smooth; }
+        .chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; margin-bottom: 10px; min-height: 0; scrollbar-width: thin; scrollbar-color: #404040 #262626; scroll-behavior: smooth; }
         .chat-messages::-webkit-scrollbar { width: 8px; }
         .chat-messages::-webkit-scrollbar-track { background: #262626; border-radius: 4px; }
         .chat-messages::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
@@ -955,7 +961,8 @@ export default function ClaudeInterface() {
 
         /* Search / Input */
         .search-container { width: 100%; max-width: 600px; position: relative; margin-bottom: 20px; }
-        .chat-container .search-container { position: sticky; bottom: 0; background-color: #1a1a1a; padding: 20px 0; margin: 0; max-width: none; }
+        .chat-container .search-container { position: relative; bottom: auto; background-color: #1a1a1a; padding: 12px 0 0 0; margin: 0; max-width: none; flex-shrink: 0; }
+        .chat-container .search-actions { bottom: 18px; }
         .search-input { width: 100%; padding: 16px 160px 16px 16px; background-color: #262626; border: 1px solid #404040; border-radius: 12px; color: #fff; font-size: 16px; outline: none; transition: border-color 0.2s; resize: none; min-height: 50px; max-height: 150px; font-family: inherit; }
         .search-input:focus { border-color: #ff6b35; }
         .search-input::placeholder { color: #808080; }
