@@ -51,7 +51,10 @@ export default function ClaudeInterface() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [recentConversations, setRecentConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  const [authStatus, setAuthStatus] = useState<'idle' | 'authenticating' | 'success' | 'failed'>('idle');
+  const [authStatus, setAuthStatus] = useState<'idle' | 'authenticating' | 'success' | 'failed'>(() => {
+    if (typeof window === 'undefined') return 'idle';
+    return localStorage.getItem('claude-puter-auth') === 'true' ? 'success' : 'idle';
+  });
   const [protocolNotice, setProtocolNotice] = useState('');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -581,10 +584,11 @@ export default function ClaudeInterface() {
       const authResponse = await puter.ai.chat('test', { model: 'claude-sonnet-4' });
       if (authResponse && (authResponse.message?.content || authResponse.success !== false)) {
         setAuthStatus('success');
-        setTimeout(() => { const authBox = document.getElementById('authBox'); if (authBox) authBox.style.display = 'none'; }, 2000);
+        localStorage.setItem('claude-puter-auth', 'true');
       } else throw new Error('Authentication failed.');
     } catch (error) {
       setAuthStatus('failed');
+      localStorage.removeItem('claude-puter-auth');
       alert('⚠️ AUTHENTICATION FAILED!\n\nTry:\n1. Use Incognito/Private Mode\n2. Disable ad-blockers\n3. Clear site data for puter.com\n4. Allow third-party cookies');
     }
   }, []);
@@ -852,7 +856,7 @@ export default function ClaudeInterface() {
                   </div>
                 </div>
 
-                <div id="authBox" className="auth-box">
+                {authStatus !== 'success' && (<div id="authBox" className="auth-box">
                   <div style={{ fontSize: '13px', color: '#b3b3b3', textAlign: 'center', marginBottom: '10px' }}>
                     💡 <strong>First time?</strong> A popup will appear for authentication - please allow it
                   </div>
@@ -864,6 +868,7 @@ export default function ClaudeInterface() {
                     </button>
                   </div>
                 </div>
+                )}
 
                 <div className="model-selector">
                   <button className="model-btn" onClick={toggleModel}>
