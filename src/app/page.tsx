@@ -74,6 +74,33 @@ export default function ClaudeInterface() {
     } catch {}
   }, []);
 
+  // Auto-fetch Puter.js user info
+  useEffect(() => {
+    const fetchPuterUser = async () => {
+      try {
+        const puter = (window as any).puter;
+        if (!puter) return;
+        const user = await puter.auth.getUser();
+        if (user) {
+          const displayName = user.username || user.name || user.email || '';
+          if (displayName) {
+            setUserName(displayName);
+            localStorage.setItem('claude-user-name', displayName);
+          }
+          if (user.plan) {
+            setUserPlan(user.plan);
+            localStorage.setItem('claude-user-plan', user.plan);
+          }
+        }
+      } catch {
+        // Not authenticated yet or getUser not available, keep defaults
+      }
+    };
+    // Wait a bit for puter.js to load
+    const timer = setTimeout(fetchPuterUser, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       if (window.location.protocol === 'file:') {
