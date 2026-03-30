@@ -9,12 +9,17 @@ const availableModels = [
   { apiName: 'claude-3-7-sonnet', displayName: 'Claude 3.7 Sonnet', shortName: 'Sonnet 3.7' },
 ];
 
+type FileStatus = 'loading' | 'ready' | 'error';
+
 interface AttachedFile {
+  id: string;
   name: string;
   size: number;
   type: string;
   base64: string;
   isImage: boolean;
+  status: FileStatus;
+  errorMsg?: string;
 }
 
 interface Message {
@@ -44,6 +49,8 @@ export default function ClaudeInterface() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [uploadToast, setUploadToast] = useState<{message: string; type: 'success' | 'error' | 'info'} | null>(null);
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [userName, setUserName] = useState('User');
   const [userPlan, setUserPlan] = useState('Free plan');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
@@ -324,39 +331,89 @@ export default function ClaudeInterface() {
     return canvas;
   };
 
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setUploadToast({ message, type });
+    toastTimerRef.current = setTimeout(() => setUploadToast(null), 3500);
+  }, []);
+
   // File handling
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
-    const newFiles: AttachedFile[] = [];
-    Array.from(files).forEach(file => {
+    if (!files || files.length === 0) return;
+    const totalFiles = files.length;
+    let completed = 0;
+    let failed = 0;
+
+    Array.from(files).forEach((file, index) => {
+      const fileId = 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+
+      // Immediately show file as "loading"
+      setAttachedFiles(prev => [...prev, {
+        id: fileId,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        base64: '',
+        isImage: file.type.startsWith('image/'),
+        status: 'loading',
+      }]);
+
       const reader = new FileReader();
+      const maxFileSize = 10 * 1024 * 1024; // 10MB limit
+
+      if (file.size > maxFileSize) {
+        failed++;
+        setAttachedFiles(prev => prev.map(f =>
+          f.id === fileId ? { ...f, status: 'error', errorMsg: 'File too large (max 10MB)' } : f
+        ));
+        completed++;
+        if (completed === totalFiles) {
+          if (failed === 0) showToast(`${totalFiles} file${totalFiles > 1 ? 's' : ''} attached successfully!`, 'success');
+          else if (failed === totalFiles) showToast(`Failed to attach all files.`, 'error');
+          else showToast(`${completed - failed} of ${totalFiles} files attached. ${failed} failed.`, 'info');
+        }
+        return;
+      }
+
       reader.onload = () => {
         const base64 = reader.result as string;
-        newFiles.push({
-          name: file.name,
-          size: file.size,
-          type: file.type,
-          base64,
-          isImage: file.type.startsWith('image/'),
-        });
-        if (newFiles.length === files.length || newFiles.length === Array.from(files).filter(() => true).length) {
-          setAttachedFiles(prev => [...prev, ...newFiles]);
+        setAttachedFiles(prev => prev.map(f =>
+          f.id === fileId ? { ...f, base64, status: 'ready' } : f
+        ));
+        completed++;
+        if (completed === totalFiles) {
+          if (failed === 0) showToast(`${totalFiles} file${totalFiles > 1 ? 's' : ''} attached successfully!`, 'success');
+          else if (failed === totalFiles) showToast(`Failed to attach all files.`, 'error');
+          else showToast(`${completed - failed} of ${totalFiles} files attached. ${failed} failed.`, 'info');
+        }
+      };
+      reader.onerror = () => {
+        failed++;
+        setAttachedFiles(prev => prev.map(f =>
+          f.id === fileId ? { ...f, status: 'error', errorMsg: 'Failed to read file' } : f
+        ));
+        completed++;
+        if (completed === totalFiles) {
+          if (failed === totalFiles) showToast(`Failed to attach all files.`, 'error');
+          else showToast(`${completed - failed} of ${totalFiles} files attached. ${failed} failed.`, 'info');
         }
       };
       reader.readAsDataURL(file);
     });
-    if (e.target) e.target.value = '';
-  }, []);
 
-  const removeAttachment = useCallback((index: number) => {
-    setAttachedFiles(prev => prev.filter((_, i) => i !== index));
+    if (e.target) e.target.value = '';
+  }, [showToast]);
+
+  const removeAttachment = useCallback((fileId: string) => {
+    setAttachedFiles(prev => prev.filter(f => f.id !== fileId));
   }, []);
 
   const sendMessage = useCallback(async (message: string, files: AttachedFile[] = []) => {
     if (isStreaming) return;
-    addMessageToDOM(message, 'user', false, files.length > 0 ? files : undefined);
-    const newHistory = [...chatHistory, { role: 'user' as const, content: message, attachments: files.length > 0 ? files : undefined }];
+    const readyFiles = files.filter(f => f.status === 'ready');
+    addMessageToDOM(message, 'user', false, readyFiles.length > 0 ? readyFiles : undefined);
+    const newHistory = [...chatHistory, { role: 'user' as const, content: message, attachments: readyFiles.length > 0 ? readyFiles : undefined }];
     setChatHistory(newHistory);
     const typingEl = document.getElementById('typingIndicator');
     if (typingEl) typingEl.style.display = 'flex';
@@ -463,6 +520,20 @@ export default function ClaudeInterface() {
       <Script src="https://js.puter.com/v2/" strategy="beforeInteractive" />
       <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} style={{ display: 'none' }}
         accept="image/*,.pdf,.doc,.docx,.txt,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.c,.cpp,.go,.rs,.rb,.php,.sql,.md,.yaml,.yml,.zip,.rar,.7z,.mp3,.mp4,.wav,.xlsx,.xls,.ppt,.pptx" />
+      
+      {/* Upload Toast Notification */}
+      {uploadToast && (
+        <div className={`upload-toast upload-toast-${uploadToast.type}`}>
+          <div className="upload-toast-icon">
+            {uploadToast.type === 'success' && <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
+            {uploadToast.type === 'error' && <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>}
+            {uploadToast.type === 'info' && <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>}
+          </div>
+          <span>{uploadToast.message}</span>
+          <button className="upload-toast-close" onClick={() => setUploadToast(null)}>✕</button>
+        </div>
+      )}
+
       <div className="container">
         {/* Sidebar */}
         <div className="sidebar">
@@ -637,14 +708,27 @@ export default function ClaudeInterface() {
                 <div className="search-container">
                   {attachedFiles.length > 0 && (
                     <div className="attachments-bar">
-                      {attachedFiles.map((file, idx) => (
-                        <div key={idx} className="attachment-chip">
-                          {file.isImage && <img src={file.base64} alt={file.name} className="attachment-thumb" />}
+                      {attachedFiles.map((file) => (
+                        <div key={file.id} className={`attachment-chip attachment-chip-${file.status}`}>
+                          {file.status === 'loading' && (
+                            <div className="attachment-spinner" />
+                          )}
+                          {file.status === 'ready' && !file.isImage && (
+                            <div className="attachment-file-icon">📄</div>
+                          )}
+                          {file.status === 'ready' && file.isImage && (
+                            <img src={file.base64} alt={file.name} className="attachment-thumb" />
+                          )}
+                          {file.status === 'error' && (
+                            <div className="attachment-error-icon">⚠️</div>
+                          )}
                           <div className="attachment-info">
                             <span className="attachment-name">{file.name}</span>
-                            <span className="attachment-size">{formatFileSize(file.size)}</span>
+                            <span className={`attachment-size ${file.status === 'loading' ? 'attachment-size-loading' : ''}`}>
+                              {file.status === 'loading' ? 'Uploading...' : file.status === 'error' ? file.errorMsg : formatFileSize(file.size)}
+                            </span>
                           </div>
-                          <button className="attachment-remove" onClick={() => removeAttachment(idx)}>✕</button>
+                          <button className="attachment-remove" onClick={() => removeAttachment(file.id)}>✕</button>
                         </div>
                       ))}
                     </div>
@@ -710,11 +794,27 @@ export default function ClaudeInterface() {
                 <div className="search-container">
                   {attachedFiles.length > 0 && (
                     <div className="attachments-bar">
-                      {attachedFiles.map((file, idx) => (
-                        <div key={idx} className="attachment-chip">
-                          {file.isImage && <img src={file.base64} alt={file.name} className="attachment-thumb" />}
-                          <div className="attachment-info"><span className="attachment-name">{file.name}</span><span className="attachment-size">{formatFileSize(file.size)}</span></div>
-                          <button className="attachment-remove" onClick={() => removeAttachment(idx)}>✕</button>
+                      {attachedFiles.map((file) => (
+                        <div key={file.id} className={`attachment-chip attachment-chip-${file.status}`}>
+                          {file.status === 'loading' && (
+                            <div className="attachment-spinner" />
+                          )}
+                          {file.status === 'ready' && !file.isImage && (
+                            <div className="attachment-file-icon">📄</div>
+                          )}
+                          {file.status === 'ready' && file.isImage && (
+                            <img src={file.base64} alt={file.name} className="attachment-thumb" />
+                          )}
+                          {file.status === 'error' && (
+                            <div className="attachment-error-icon">⚠️</div>
+                          )}
+                          <div className="attachment-info">
+                            <span className="attachment-name">{file.name}</span>
+                            <span className={`attachment-size ${file.status === 'loading' ? 'attachment-size-loading' : ''}`}>
+                              {file.status === 'loading' ? 'Uploading...' : file.status === 'error' ? file.errorMsg : formatFileSize(file.size)}
+                            </span>
+                          </div>
+                          <button className="attachment-remove" onClick={() => removeAttachment(file.id)}>✕</button>
                         </div>
                       ))}
                     </div>
@@ -886,6 +986,27 @@ export default function ClaudeInterface() {
         .attachment-size { font-size: 11px; color: #808080; }
         .attachment-remove { background: none; border: none; color: #808080; cursor: pointer; padding: 2px; font-size: 12px; flex-shrink: 0; border-radius: 4px; }
         .attachment-remove:hover { color: #ff6b6b; background-color: #404040; }
+
+        /* Attachment states */
+        .attachment-chip-loading { border-color: #4a90e2; background-color: rgba(74, 144, 226, 0.08); }
+        .attachment-chip-ready { border-color: #22c55e; }
+        .attachment-chip-error { border-color: #dc2626; background-color: rgba(220, 38, 38, 0.08); }
+        .attachment-spinner { width: 24px; height: 24px; border: 2px solid #404040; border-top-color: #4a90e2; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .attachment-file-icon { font-size: 20px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .attachment-error-icon { font-size: 20px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .attachment-size-loading { color: #4a90e2 !important; }
+
+        /* Upload Toast */
+        .upload-toast { position: fixed; top: 20px; right: 20px; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; color: #fff; font-size: 14px; z-index: 10000; box-shadow: 0 8px 32px rgba(0,0,0,0.5); animation: slideIn 0.3s ease-out; max-width: 400px; }
+        .upload-toast-success { background: linear-gradient(135deg, #16a34a, #22c55e); }
+        .upload-toast-error { background: linear-gradient(135deg, #b91c1c, #dc2626); }
+        .upload-toast-info { background: linear-gradient(135deg, #1d4ed8, #3b82f6); }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .upload-toast-icon { flex-shrink: 0; display: flex; align-items: center; }
+        .upload-toast span { flex: 1; }
+        .upload-toast-close { background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; padding: 2px 4px; font-size: 12px; border-radius: 4px; flex-shrink: 0; }
+        .upload-toast-close:hover { color: #fff; background: rgba(255,255,255,0.2); }
 
         /* Artifacts */
         .artifact-canvas { background-color: #0d0d0d; border: 1px solid #404040; border-radius: 8px; margin: 16px; overflow: hidden; }
