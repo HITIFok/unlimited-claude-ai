@@ -2,6 +2,13 @@
 
 import Script from 'next/script';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { ensureAuth } from '@/lib/firebase';
+import {
+  saveConversation as saveConvToFirestore,
+  loadConversations as loadConvsFromFirestore,
+  deleteConversation as deleteConvFromFirestore,
+  clearAllConversations as clearConvsFromFirestore,
+} from '@/lib/firestore';
 
 const availableModels = [
   { apiName: 'claude-sonnet-4', displayName: 'Claude Sonnet 4', shortName: 'Sonnet 4' },
@@ -54,6 +61,8 @@ export default function ClaudeInterface() {
   const [userName, setUserName] = useState('User');
   const [userPlan, setUserPlan] = useState('Free plan');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [firebaseUserId, setFirebaseUserId] = useState<string | null>(null);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
 
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -64,34 +73,63 @@ export default function ClaudeInterface() {
   // Ref to always have the latest conversation ID (avoids stale closure in async functions)
   const currentConversationIdRef = useRef<string | null>(null);
 
-  // Load saved data
+  // Initialize Firebase auth and load conversations
+  useEffect(() => {
+    const initFirebase = async () => {
+      try {
+        const userId = await ensureAuth();
+        setFirebaseUserId(userId);
+      } catch (err) {
+        console.error('Firebase auth failed:', err);
+      }
+    };
+    initFirebase();
+  }, []);
+
+  // Load conversations from Firestore once we have a userId
+  useEffect(() => {
+    if (!firebaseUserId) return;
+    let cancelled = false;
+    const loadFromCloud = async () => {
+      setIsLoadingConversations(true);
+      try {
+        const convs = await loadConvsFromFirestore(firebaseUserId);
+        if (!cancelled && convs.length > 0) {
+          setRecentConversations(convs);
+        }
+      } catch (err) {
+        console.error('Failed to load conversations:', err);
+      } finally {
+        if (!cancelled) setIsLoadingConversations(false);
+      }
+    };
+    loadFromCloud();
+    return () => { cancelled = true; };
+  }, [firebaseUserId]);
+
+  // Save current conversation to Firestore when it changes
+  useEffect(() => {
+    if (!firebaseUserId || !currentConversationIdRef.current) return;
+    const conv = recentConversations.find(c => c.id === currentConversationIdRef.current);
+    if (!conv) return;
+    // Debounce: save after 500ms of no changes
+    const timer = setTimeout(() => {
+      saveConvToFirestore(firebaseUserId, conv).catch(err => {
+        console.error('Failed to save conversation:', err);
+      });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [recentConversations, firebaseUserId]);
+
+  // Load saved user name/plan from localStorage
   useEffect(() => {
     try {
       const savedName = localStorage.getItem('claude-user-name');
       const savedPlan = localStorage.getItem('claude-user-plan');
       if (savedName) setUserName(savedName);
       if (savedPlan) setUserPlan(savedPlan);
-      // Load saved conversations
-      const savedConvs = localStorage.getItem('claude-conversations');
-      if (savedConvs) {
-        try {
-          const parsed = JSON.parse(savedConvs);
-          if (Array.isArray(parsed)) {
-            setRecentConversations(parsed);
-          }
-        } catch {}
-      }
     } catch {}
   }, []);
-
-  // Save conversations to localStorage on every change
-  useEffect(() => {
-    try {
-      if (recentConversations.length > 0) {
-        localStorage.setItem('claude-conversations', JSON.stringify(recentConversations));
-      }
-    } catch {}
-  }, [recentConversations]);
 
   // Auto-fetch Puter.js user info
   useEffect(() => {
@@ -195,13 +233,19 @@ export default function ClaudeInterface() {
     ));
   }, []);
 
-  const deleteConversation = useCallback((convId: string, e?: React.MouseEvent) => {
+  const deleteConversation = useCallback(async (convId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setRecentConversations(prev => prev.filter(c => c.id !== convId));
+    // Delete from Firestore
+    if (firebaseUserId) {
+      deleteConvFromFirestore(firebaseUserId, convId).catch(err => {
+        console.error('Failed to delete conversation:', err);
+      });
+    }
     if (currentConversationId === convId) {
       startNewChat();
     }
-  }, [currentConversationId]);
+  }, [currentConversationId, firebaseUserId]);
 
   const startNewChat = useCallback(() => {
     setChatHistory([]);
@@ -717,7 +761,7 @@ export default function ClaudeInterface() {
                       setUserName(newName);
                       localStorage.setItem('claude-user-name', newName);
                     }}>{userName}</div>
-                    <div className="user-menu-plan">{userPlan} via Puter.js</div>
+                    <div className="user-menu-plan">{userPlan} via Puter.js {firebaseUserId && <span style={{ opacity: 0.5 }}> · ☁️ Synced</span>}</div>
                   </div>
                 </div>
                 <div className="user-menu-divider" />
@@ -726,7 +770,13 @@ export default function ClaudeInterface() {
                   Share link
                 </div>
                 <div className="user-menu-item" onClick={() => {
-                  if (confirm('Clear all conversation history?')) { setRecentConversations([]); localStorage.removeItem('claude-conversations'); startNewChat(); }
+                  if (confirm('Clear all conversation history?')) {
+                    setRecentConversations([]);
+                    if (firebaseUserId) {
+                      clearConvsFromFirestore(firebaseUserId).catch(err => console.error('Failed to clear:', err));
+                    }
+                    startNewChat();
+                  }
                   setShowUserMenu(false);
                 }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
