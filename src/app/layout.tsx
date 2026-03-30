@@ -18,7 +18,11 @@ export const metadata: Metadata = {
     "A fully functional, self-hosted web interface for Anthropic's Claude AI, powered by Puter.js. 100% free, no backend required.",
   keywords: ["Claude", "AI", "Chat", "Puter", "Anthropic", "Free AI"],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/claude-icon.png", sizes: "1024x1024", type: "image/png" },
+    ],
+    apple: "/claude-icon.png",
   },
   openGraph: {
     title: "Claude Interface - Unlimited Free AI",
