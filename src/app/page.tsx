@@ -11,9 +11,13 @@ import {
 } from '@/lib/firestore';
 
 const availableModels = [
-  { apiName: 'claude-sonnet-4', displayName: 'Claude Sonnet 4', shortName: 'Sonnet 4' },
-  { apiName: 'claude-opus-4', displayName: 'Claude Opus 4', shortName: 'Opus 4' },
-  { apiName: 'claude-3-7-sonnet', displayName: 'Claude 3.7 Sonnet', shortName: 'Sonnet 3.7' },
+  { apiName: 'claude-sonnet-4-20250514', displayName: 'Claude Sonnet 4', shortName: 'Sonnet 4', tier: 'free' },
+  { apiName: 'claude-opus-4-20250514', displayName: 'Claude Opus 4', shortName: 'Opus 4', tier: 'free' },
+  { apiName: 'claude-sonnet-4-6-20250527', displayName: 'Claude Sonnet 4.6', shortName: 'Sonnet 4.6', tier: 'premium' },
+  { apiName: 'claude-opus-4-6-20250527', displayName: 'Claude Opus 4.6', shortName: 'Opus 4.6', tier: 'premium' },
+  { apiName: 'claude-3-7-sonnet-20250219', displayName: 'Claude 3.7 Sonnet', shortName: '3.7 Sonnet', tier: 'free' },
+  { apiName: 'claude-3-5-sonnet-20241022', displayName: 'Claude 3.5 Sonnet', shortName: '3.5 Sonnet', tier: 'free' },
+  { apiName: 'claude-3-5-haiku-20241022', displayName: 'Claude 3.5 Haiku', shortName: 'Haiku 3.5', tier: 'free' },
 ];
 
 type FileStatus = 'loading' | 'ready' | 'error';
@@ -64,6 +68,7 @@ export default function ClaudeInterface() {
   const [userName, setUserName] = useState('User');
   const [userPlan, setUserPlan] = useState('Free plan');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [firebaseUserId, setFirebaseUserId] = useState<string | null>(null);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
 
@@ -73,6 +78,7 @@ export default function ClaudeInterface() {
   const fullResponseRef = useRef<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
   // Ref to always have the latest conversation ID (avoids stale closure in async functions)
   const currentConversationIdRef = useRef<string | null>(null);
 
@@ -173,11 +179,14 @@ export default function ClaudeInterface() {
     }
   }, []);
 
-  // Close user menu on outside click
+  // Close menus on outside click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setShowUserMenu(false);
+      }
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setShowModelDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
@@ -871,10 +880,26 @@ export default function ClaudeInterface() {
                 )}
 
                 <div className="model-selector">
-                  <button className="model-btn" onClick={toggleModel}>
-                    <span id="currentModel">Claude Sonnet 4</span>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
-                  </button>
+                  <div className="model-dropdown" ref={modelDropdownRef}>
+                    <button className="model-btn" onClick={() => setShowModelDropdown(!showModelDropdown)}>
+                      <span id="currentModel">{availableModels.find(m => m.apiName === currentModel)?.displayName || 'Claude Sonnet 4'}</span>
+                      <span className="model-tier-badge model-tier-badge-{availableModels.find(m => m.apiName === currentModel)?.tier || 'free'}">{availableModels.find(m => m.apiName === currentModel)?.tier === 'premium' ? '✨' : '⚡'}</span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+                    </button>
+                    {showModelDropdown && (
+                      <div className="model-dropdown-list">
+                        {availableModels.map(model => (
+                          <div key={model.apiName} className={`model-dropdown-item ${currentModel === model.apiName ? 'model-dropdown-active' : ''}`} onClick={() => { setCurrentModel(model.apiName); setShowModelDropdown(false); }}>
+                            <div className="model-dropdown-info">
+                              <span className="model-dropdown-name">{model.displayName}</span>
+                              <span className="model-tier-badge model-tier-badge-{model.tier}">{model.tier === 'premium' ? '✨ Premium' : '⚡ Free'}</span>
+                            </div>
+                            {currentModel === model.apiName && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.6 }}><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="action-buttons">
@@ -942,8 +967,9 @@ export default function ClaudeInterface() {
                           <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
                         </svg>
                       </button>
-                      <button className="model-btn" onClick={toggleModel} style={{ padding: '6px 8px', fontSize: '12px' }}>
-                        <span id="chatCurrentModel">Sonnet 4</span>
+                      <button className="model-btn chat-model-btn" onClick={() => setShowModelDropdown(!showModelDropdown)} style={{ padding: '6px 8px', fontSize: '12px' }}>
+                        <span id="chatCurrentModel">{availableModels.find(m => m.apiName === currentModel)?.shortName || 'Sonnet 4'}</span>
+                        <span className={`model-tier-badge model-tier-badge-${availableModels.find(m => m.apiName === currentModel)?.tier || 'free'}`} style={{ fontSize: '10px', padding: '1px 4px', marginLeft: '4px' }}>{availableModels.find(m => m.apiName === currentModel)?.tier === 'premium' ? '✨' : '⚡'}</span>
                       </button>
                       <button className="send-btn" onClick={handleChatMessage} disabled={isStreaming} style={{ opacity: isStreaming ? 0.6 : 1 }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
@@ -1095,9 +1121,20 @@ export default function ClaudeInterface() {
         .send-btn { padding: 8px; background-color: #ff6b35; border: none; color: white; cursor: pointer; border-radius: 6px; transition: background-color 0.2s; display: flex; align-items: center; justify-content: center; }
         .send-btn:hover { background-color: #e55a2b; }
         .send-btn:disabled { background-color: #404040; cursor: not-allowed; }
-        .model-selector { align-self: flex-end; margin-bottom: 20px; margin-right: 60px; }
         .model-btn { display: flex; align-items: center; gap: 8px; background: none; border: none; color: #b3b3b3; font-size: 14px; cursor: pointer; padding: 8px 12px; border-radius: 6px; transition: background-color 0.2s; }
         .model-btn:hover { background-color: #262626; }
+        .model-selector { align-self: flex-end; margin-bottom: 16px; position: relative; }
+        .model-dropdown { position: relative; }
+        .model-dropdown-list { position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background-color: #2a2a2a; border: 1px solid #404040; border-radius: 10px; padding: 6px; min-width: 240px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); z-index: 200; max-height: 400px; overflow-y: auto; }
+        .model-dropdown-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; cursor: pointer; transition: background-color 0.15s; gap: 8px; }
+        .model-dropdown-item:hover { background-color: #333; }
+        .model-dropdown-active { background-color: #333; }
+        .model-dropdown-info { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+        .model-dropdown-name { font-size: 13px; color: #e5e5e5; white-space: nowrap; }
+        .model-tier-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; }
+        .model-tier-badge-free { background-color: #1a3a1a; color: #4ade80; }
+        .model-tier-badge-premium { background-color: #3a2a0a; color: #fbbf24; }
+        .chat-model-btn { flex-direction: row; }
         .action-buttons { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
         .action-btn { display: flex; align-items: center; gap: 8px; padding: 12px 20px; background-color: #262626; border: 1px solid #404040; border-radius: 8px; color: #e5e5e5; font-size: 14px; cursor: pointer; transition: all 0.2s; text-decoration: none; }
         .action-btn:hover { background-color: #333; border-color: #555; transform: translateY(-1px); }
