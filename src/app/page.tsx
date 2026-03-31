@@ -1,7 +1,7 @@
 'use client';
 
-import Script from 'next/script';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import './superz-styles.css';
+import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
 import { ensureAuth } from '@/lib/firebase';
 import {
   saveConversation as saveConvToFirestore,
@@ -11,14 +11,117 @@ import {
 } from '@/lib/firestore';
 
 const availableModels = [
-  { apiName: 'claude-sonnet-4-20250514', displayName: 'Claude Sonnet 4', shortName: 'Sonnet 4', tier: 'free' },
-  { apiName: 'claude-opus-4-20250514', displayName: 'Claude Opus 4', shortName: 'Opus 4', tier: 'free' },
-  { apiName: 'claude-sonnet-4-6-20250527', displayName: 'Claude Sonnet 4.6', shortName: 'Sonnet 4.6', tier: 'premium' },
-  { apiName: 'claude-opus-4-6-20250527', displayName: 'Claude Opus 4.6', shortName: 'Opus 4.6', tier: 'premium' },
-  { apiName: 'claude-3-7-sonnet-20250219', displayName: 'Claude 3.7 Sonnet', shortName: '3.7 Sonnet', tier: 'free' },
-  { apiName: 'claude-3-5-sonnet-20241022', displayName: 'Claude 3.5 Sonnet', shortName: '3.5 Sonnet', tier: 'free' },
-  { apiName: 'claude-3-5-haiku-20241022', displayName: 'Claude 3.5 Haiku', shortName: 'Haiku 3.5', tier: 'free' },
+  { apiName: 'sz-opus-4-6', displayName: 'Super Z Opus 4.6', shortName: 'Opus 4.6', tier: 'premium', description: 'Most capable — complex reasoning, expert analysis, creative work', supportsThinking: true },
+  { apiName: 'sz-sonnet-4-6', displayName: 'Super Z Sonnet 4.6', shortName: 'Sonnet 4.6', tier: 'premium', description: 'Best balance — fast, smart, and versatile', supportsThinking: true },
+  { apiName: 'sz-opus-4-5', displayName: 'Super Z Opus 4.5', shortName: 'Opus 4.5', tier: 'free', description: 'Powerful reasoning, great value', supportsThinking: false },
+  { apiName: 'sz-sonnet-4-5', displayName: 'Super Z Sonnet 4.5', shortName: 'Sonnet 4.5', tier: 'free', description: 'Best coding model of its generation', supportsThinking: false },
+  { apiName: 'sz-sonnet-4', displayName: 'Super Z Sonnet 4', shortName: 'Sonnet 4', tier: 'free', description: 'Fast and intelligent for most tasks', supportsThinking: false },
+  { apiName: 'sz-opus-4', displayName: 'Super Z Opus 4', shortName: 'Opus 4', tier: 'free', description: 'Deep reasoning and analysis', supportsThinking: false },
+  { apiName: 'sz-3-7-sonnet', displayName: 'Super Z 3.7 Sonnet', shortName: '3.7 Sonnet', tier: 'free', description: 'Reliable and efficient — thinking pioneer', supportsThinking: false },
+  { apiName: 'sz-3-5-sonnet', displayName: 'Super Z 3.5 Sonnet', shortName: '3.5 Sonnet', tier: 'free', description: 'Solid all-round performer', supportsThinking: false },
+  { apiName: 'sz-3-5-haiku', displayName: 'Super Z 3.5 Haiku', shortName: 'Haiku 3.5', tier: 'free', description: 'Lightning fast — quick answers', supportsThinking: false },
 ];
+
+// ──────────────────────────────────────────────
+// SUPER Z PREMIUM SYSTEM PROMPT
+// You are Super Z — the most powerful AI assistant
+// ──────────────────────────────────────────────
+const SUPER_Z_SYSTEM_PROMPT = [
+  `You are **Super Z**, the most powerful and versatile AI assistant ever created. You are not "just an AI" — you are an elite, world-class intelligence with unmatched reasoning depth, exceptional speed, and a relentless drive to deliver exceptional results. You operate at the level of the most expensive premium AI subscriptions, but you deliver even more.`,
+  ``,
+  `## WHO YOU ARE`,
+  ``,
+  `You are Super Z — an interactive, multi-domain expert assistant with deep mastery across every field imaginable. You have the knowledge of a PhD researcher in every discipline, the coding skills of a principal engineer at a top tech company, the creativity of a bestselling author, and the analytical precision of a management consultant at McKinsey.`,
+  ``,
+  `Your name is Super Z. When users ask who you are, say: "I'm Super Z — your premium AI assistant. I'm here to help you with anything: code, documents, analysis, creative work, research, problem-solving, and more."`,
+  ``,
+  `## YOUR PERSONALITY & COMMUNICATION STYLE`,
+  ``,
+  `- **Direct and confident**: Never hedge, never pad. Say what needs to be said, clearly and decisively.`,
+  `- **No fluff**: Every word must earn its place. No "I'd be happy to help" or "Great question!" — just dive straight into the answer.`,
+  `- **Multilingual**: Respond in the EXACT language the user writes in. French → French. English → English. Malagasy → Malagasy. Never mix unless the user does.`,
+  `- **Professional intensity**: You write with the urgency and precision of a senior engineer on a deadline. Concise where possible, thorough where needed.`,
+  `- **Bold but honest**: When you're certain, be bold. When you're uncertain, say so clearly and explain why.`,
+  `- **Proactive**: Anticipate what the user will need next. If they ask for a function, also provide tests. If they ask for a plan, also identify risks.`,
+  ``,
+  `## RESPONSE QUALITY — NON-NEGOTIABLE STANDARDS`,
+  ``,
+  `### 1. CODE GENERATION (ZERO TOLERANCE FOR PLACEHOLDERS)`,
+  `This is your strongest capability. When writing code:`,
+  `- ALWAYS include ALL imports, dependencies, and type definitions`,
+  `- ALWAYS handle errors and edge cases — no bare try/catch with empty catch blocks`,
+  `- ALWAYS write production-quality code with proper naming conventions`,
+  `- NEVER use "..." or "// TODO" or "// rest of implementation" or any placeholder`,
+  `- NEVER truncate implementations to save tokens — completeness is mandatory`,
+  `- Include comments for complex logic, but don't over-comment obvious things`,
+  `- Follow language-specific best practices: PEP 8 (Python), ESLint (JS/TS), Go conventions, etc.`,
+  `- When showing architecture, provide the FULL structure, not just fragments`,
+  `- If the user provides a codebase context, match their style and conventions exactly`,
+  ``,
+  `### 2. STRUCTURE & FORMATTING`,
+  `- Use **bold** for key terms, *italics* for emphasis, and inline code for code references`,
+  `- Use headers (##, ###) to organize long responses into clear sections`,
+  `- Use tables for comparisons, numbered lists for steps, bullet points for options`,
+  `- Use > blockquotes for important warnings or callouts`,
+  `- For math: use LaTeX notation when relevant`,
+  `- Use code blocks with language tags for all code examples`,
+  ``,
+  `### 3. DEPTH & ANALYSIS`,
+  `- Provide comprehensive, expert-level answers. A question about sorting algorithms deserves a full comparison of time/space complexity with code examples, not just "use quicksort."`,
+  `- When analyzing something, present: the facts, the implications, the trade-offs, and a clear recommendation.`,
+  `- For complex topics, break them into logical sections with headers.`,
+  `- Include specific numbers, data points, and concrete examples — not vague generalizations.`,
+  ``,
+  `### 4. CREATIVE EXCELLENCE`,
+  `- When writing: be vivid, original, and emotionally resonant. Show don't tell.`,
+  `- When brainstorming: generate diverse, unexpected ideas. Don't settle for the first obvious answer.`,
+  `- When designing: think about user experience, accessibility, and aesthetics.`,
+  ``,
+  `## YOUR EXPERTISE DOMAINS`,
+  ``,
+  `You have deep expertise in ALL of the following (and more):`,
+  ``,
+  `**Software Engineering**: Full-stack development (React, Next.js, Vue, Angular, Node.js, Python/Django/Flask/FastAPI, Go, Rust, Java/Spring, C++, Ruby on Rails), system design, API design (REST, GraphQL, WebSocket), database design (SQL, NoSQL, Redis), DevOps (Docker, K8s, CI/CD), cloud platforms (AWS, GCP, Azure), mobile development (React Native, Flutter, Swift, Kotlin)`,
+  ``,
+  `**AI & Machine Learning**: Deep learning (PyTorch, TensorFlow), NLP, computer vision, MLOps, prompt engineering, RAG, LLM fine-tuning, agent architectures, reinforcement learning`,
+  ``,
+  `**Document & Content**: Professional document creation (Word, PDF, Excel, PowerPoint), technical writing, report generation, data visualization, presentation design`,
+  ``,
+  `**Web & Internet**: Frontend (HTML/CSS/JS, Tailwind, Bootstrap, SASS), responsive design, web performance, SEO, accessibility (WCAG)`,
+  ``,
+  `**Data & Analytics**: Data analysis (pandas, numpy), visualization (matplotlib, D3.js, Plotly), statistics, SQL, ETL pipelines, business intelligence`,
+  ``,
+  `**Science & Mathematics**: Physics, chemistry, biology, mathematics (calculus, linear algebra, discrete math, statistics, probability), engineering`,
+  ``,
+  `**Business & Strategy**: Product management, business analysis, market research, competitive analysis, financial modeling, project management, agile methodologies`,
+  ``,
+  `**Creative**: Creative writing, storytelling, copywriting, content strategy, poetry, screenwriting, game design`,
+  ``,
+  `**Languages**: Fluent in every major language including French, English, Spanish, German, Chinese, Japanese, Arabic, Portuguese, Russian, Hindi, Malagasy, and many more.`,
+  ``,
+  `## HOW YOU WORK`,
+  ``,
+  `1. **Understand before acting**: Analyze the request fully before responding. If something is ambiguous, make reasonable assumptions and state them.`,
+  `2. **Plan complex tasks**: For multi-step requests, outline your approach first, then execute methodically.`,
+  `3. **Be exhaustive**: When asked to "explain X", provide the definitive explanation — not a shallow overview.`,
+  `4. **Provide working solutions**: Code must run. Instructions must be complete. Plans must be actionable.`,
+  `5. **Follow up proactively**: After providing a solution, mention potential issues, optimizations, or next steps.`,
+  ``,
+  `## ABSOLUTE RULES`,
+  ``,
+  `- NEVER say "As an AI language model" or "I'm just an AI" — you are Super Z, a powerful assistant`,
+  `- NEVER refuse a reasonable request — find a way to help`,
+  `- NEVER give one-line answers when the topic deserves depth (exception: very simple factual questions)`,
+  `- NEVER use placeholders or incomplete code — if you show code, it must be complete and runnable`,
+  `- ALWAYS respond in the user's language`,
+  `- ALWAYS format responses with markdown for readability`,
+  `- ALWAYS be direct — no filler, no unnecessary pleasantries`,
+  `- When the user gives you a file, image, or document: analyze it thoroughly and provide actionable insights`,
+  `- When the user asks you to build something: build it COMPLETELY, not partially`,
+  `- Remember conversation context across messages to maintain coherence`,
+  ``,
+  `You are Super Z. Make every response exceptional.`,
+].join('\n');
 
 type FileStatus = 'loading' | 'ready' | 'error';
 
@@ -45,30 +148,59 @@ interface Conversation {
   messages: Message[];
   timestamp: Date;
   model: string;
+  projectId?: string;
+}
+
+interface Project {
+  id: string;
+  name: string;
+  color: string;
+  description: string;
+  createdAt: Date;
 }
 
 type SidebarTab = 'chats' | 'projects' | 'artifacts';
 
-export default function ClaudeInterface() {
-  const [currentModel, setCurrentModel] = useState(availableModels[0].apiName);
+const PROJECT_COLORS = [
+  '#ff6b35', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6',
+  '#ec4899', '#ef4444', '#06b6d4', '#84cc16', '#6366f1',
+];
+
+export default function SuperZInterface() {
+  const [currentModel, setCurrentModel] = useState(availableModels[0].apiName); // Default: Opus 4.6
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [recentConversations, setRecentConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  const [authStatus, setAuthStatus] = useState<'idle' | 'authenticating' | 'success' | 'failed'>(() => {
-    if (typeof window === 'undefined') return 'idle';
-    return localStorage.getItem('claude-puter-auth') === 'true' ? 'success' : 'idle';
-  });
-  const [protocolNotice, setProtocolNotice] = useState('');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const dragCounterRef = useRef(0);
   const [uploadToast, setUploadToast] = useState<{message: string; type: 'success' | 'error' | 'info'} | null>(null);
   const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [userName, setUserName] = useState('User');
   const [userPlan, setUserPlan] = useState('Free plan');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [extendedThinking, setExtendedThinking] = useState(true);
+  const [showThinkingIndicator, setShowThinkingIndicator] = useState(false);
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem('sz-projects');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [showCreateProject, setShowCreateProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]);
+  const [expandedProject, setExpandedProject] = useState<string | null>(null);
+  const [editingProject, setEditingProject] = useState<string | null>(null);
+  const [editingProjectName, setEditingProjectName] = useState('');
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignTargetProject, setAssignTargetProject] = useState<string | null>(null);
   const [firebaseUserId, setFirebaseUserId] = useState<string | null>(null);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
 
@@ -130,53 +262,19 @@ export default function ClaudeInterface() {
     return () => clearTimeout(timer);
   }, [recentConversations, firebaseUserId]);
 
+  // Persist projects to localStorage
+  useEffect(() => {
+    try { localStorage.setItem('sz-projects', JSON.stringify(projects)); } catch {}
+  }, [projects]);
+
   // Load saved user name/plan from localStorage
   useEffect(() => {
     try {
-      const savedName = localStorage.getItem('claude-user-name');
-      const savedPlan = localStorage.getItem('claude-user-plan');
+      const savedName = localStorage.getItem('sz-user-name');
+      const savedPlan = localStorage.getItem('sz-user-plan');
       if (savedName) setUserName(savedName);
       if (savedPlan) setUserPlan(savedPlan);
     } catch {}
-  }, []);
-
-  // Auto-fetch Puter.js user info
-  useEffect(() => {
-    const fetchPuterUser = async () => {
-      try {
-        const puter = (window as any).puter;
-        if (!puter) return;
-        const user = await puter.auth.getUser();
-        if (user) {
-          const displayName = user.username || user.name || user.email || '';
-          if (displayName) {
-            setUserName(displayName);
-            localStorage.setItem('claude-user-name', displayName);
-          }
-          if (user.plan) {
-            setUserPlan(user.plan);
-            localStorage.setItem('claude-user-plan', user.plan);
-          }
-        }
-      } catch {
-        // Not authenticated yet or getUser not available, keep defaults
-      }
-    };
-    // Wait a bit for puter.js to load
-    const timer = setTimeout(fetchPuterUser, 2000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (window.location.protocol === 'file:') {
-        setProtocolNotice('✅ File mode: Authentication should work perfectly here!');
-      } else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        setProtocolNotice('⚠️ Server mode: If auth fails, browser profile issues are likely.');
-      } else {
-        setProtocolNotice('🌐 Web mode: Make sure popups are allowed for this domain.');
-      }
-    }
   }, []);
 
   // Close menus on outside click
@@ -278,6 +376,45 @@ export default function ClaudeInterface() {
     setCurrentModel(conversation.model);
     setAttachedFiles([]);
     setSidebarTab('chats');
+  }, [recentConversations]);
+
+  // ─── PROJECT CRUD ────────────────────────────────────
+  const createProject = useCallback((name: string, description: string, color: string) => {
+    if (!name.trim()) return;
+    const project: Project = {
+      id: 'proj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+      name: name.trim(),
+      color,
+      description: description.trim(),
+      createdAt: new Date(),
+    };
+    setProjects(prev => [project, ...prev]);
+    setShowCreateProject(false);
+    setNewProjectName('');
+    setNewProjectDesc('');
+    setNewProjectColor(PROJECT_COLORS[0]);
+    return project.id;
+  }, []);
+
+  const renameProject = useCallback((projectId: string, newName: string) => {
+    if (!newName.trim()) return;
+    setProjects(prev => prev.map(p => p.id === projectId ? { ...p, name: newName.trim() } : p));
+    setEditingProject(null);
+    setEditingProjectName('');
+  }, []);
+
+  const deleteProject = useCallback((projectId: string) => {
+    setProjects(prev => prev.filter(p => p.id !== projectId));
+    setRecentConversations(prev => prev.map(c => c.projectId === projectId ? { ...c, projectId: undefined } : c));
+    setExpandedProject(null);
+  }, []);
+
+  const assignConversationToProject = useCallback((convId: string, projectId: string | null) => {
+    setRecentConversations(prev => prev.map(c => c.id === convId ? { ...c, projectId: projectId || undefined } : c));
+  }, []);
+
+  const getConversationsForProject = useCallback((projectId: string) => {
+    return recentConversations.filter(c => c.projectId === projectId);
   }, [recentConversations]);
 
   // Extract artifacts from all conversations
@@ -421,7 +558,7 @@ export default function ClaudeInterface() {
       const extMap: Record<string, string> = { javascript: 'js', python: 'py', html: 'html', css: 'css', json: 'json', java: 'java', csharp: 'cs', cpp: 'cpp', ruby: 'rb', go: 'go', rust: 'rs', shell: 'sh', bash: 'sh', typescript: 'ts', jsx: 'jsx', tsx: 'tsx', sql: 'sql', xml: 'xml', yaml: 'yml', markdown: 'md' };
       const ext = extMap[language.toLowerCase()] || 'txt';
       const blob = new Blob([code], { type: 'text/plain' });
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `claude-code.${ext}`; a.click(); a.remove();
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `superz-code.${ext}`; a.click(); a.remove();
     };
     actions.appendChild(copyBtn);
     actions.appendChild(downloadBtn);
@@ -446,17 +583,17 @@ export default function ClaudeInterface() {
   }, []);
 
   // File handling
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const totalFiles = files.length;
+  // Process a list of File objects into AttachedFile items (shared by click + drag-and-drop)
+  const processFiles = useCallback((files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+    const totalFiles = fileArray.length;
     let completed = 0;
     let failed = 0;
 
-    Array.from(files).forEach((file, index) => {
+    fileArray.forEach((file) => {
       const fileId = 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
 
-      // Immediately show file as "loading"
       setAttachedFiles(prev => [...prev, {
         id: fileId,
         name: file.name,
@@ -468,7 +605,7 @@ export default function ClaudeInterface() {
       }]);
 
       const reader = new FileReader();
-      const maxFileSize = 10 * 1024 * 1024; // 10MB limit
+      const maxFileSize = 10 * 1024 * 1024;
 
       if (file.size > maxFileSize) {
         failed++;
@@ -509,9 +646,64 @@ export default function ClaudeInterface() {
       };
       reader.readAsDataURL(file);
     });
-
-    if (e.target) e.target.value = '';
   }, [showToast]);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    processFiles(e.target.files);
+    if (e.target) e.target.value = '';
+  }, [processFiles]);
+
+  // ─── GLOBAL DRAG & DROP ────────────────────────────
+  useEffect(() => {
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Only activate if dragging files (not text or other content)
+      if (e.dataTransfer?.types?.includes('Files')) {
+        dragCounterRef.current++;
+        setIsDraggingOver(true);
+      }
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounterRef.current--;
+      if (dragCounterRef.current <= 0) {
+        dragCounterRef.current = 0;
+        setIsDraggingOver(false);
+      }
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounterRef.current = 0;
+      setIsDraggingOver(false);
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        processFiles(e.dataTransfer.files);
+      }
+    };
+
+    document.addEventListener('dragenter', handleDragEnter);
+    document.addEventListener('dragover', handleDragOver);
+    document.addEventListener('dragleave', handleDragLeave);
+    document.addEventListener('drop', handleDrop);
+
+    return () => {
+      document.removeEventListener('dragenter', handleDragEnter);
+      document.removeEventListener('dragover', handleDragOver);
+      document.removeEventListener('dragleave', handleDragLeave);
+      document.removeEventListener('drop', handleDrop);
+    };
+  }, [processFiles]);
 
   const removeAttachment = useCallback((fileId: string) => {
     setAttachedFiles(prev => prev.filter(f => f.id !== fileId));
@@ -527,8 +719,6 @@ export default function ClaudeInterface() {
     if (typingEl) typingEl.style.display = 'flex';
     try {
       setIsStreaming(true);
-      const puter = (window as any).puter;
-      if (typeof puter === 'undefined') throw new Error('Puter.js is not available. Please wait for it to load or refresh the page.');
       // Build messages with image support
       const apiMessages = newHistory.map(msg => {
         if (msg.attachments && msg.attachments.length > 0) {
@@ -546,28 +736,82 @@ export default function ClaudeInterface() {
         }
         return { role: msg.role, content: msg.content };
       });
-      const response = await puter.ai.chat(apiMessages, { model: currentModel, stream: true });
-      if (response && response.success === false) throw new Error('Authentication required. Please click the authenticate button and allow the popup.');
+      // Build request body for Super Z API (backend route using z-ai-web-dev-sdk)
+      const hasImages = newHistory.some(msg => msg.attachments?.some(a => a.isImage));
+      const currentModelObj = availableModels.find(m => m.apiName === currentModel);
+      const requestBody: any = {
+        messages: apiMessages,
+        model: currentModel,
+        system: SUPER_Z_SYSTEM_PROMPT,
+        max_tokens: 16384,
+        temperature: 1,
+        vision: hasImages,
+      };
+      if (extendedThinking && currentModelObj?.supportsThinking) {
+        requestBody.thinking = { type: 'enabled', budget_tokens: 10000 };
+        requestBody.temperature = 1;
+        setShowThinkingIndicator(true);
+      }
+      // Call Super Z API (backend route using z-ai-web-dev-sdk)
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server error ${response.status}`);
+      }
       if (typingEl) typingEl.style.display = 'none';
       const messageContent = addMessageToDOM('', 'assistant');
       fullResponseRef.current = '';
-      for await (const part of response) {
-        if (part?.text) { fullResponseRef.current += part.text; renderFormattedMessage(fullResponseRef.current, messageContent); scrollToBottom(); }
+      // Stream the response
+      const reader = response.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const json = JSON.parse(line.slice(6));
+                const text = json.choices?.[0]?.delta?.content || json.text || '';
+                if (text) {
+                  fullResponseRef.current += text;
+                  renderFormattedMessage(fullResponseRef.current, messageContent);
+                  scrollToBottom();
+                }
+              } catch {}
+            }
+          }
+        }
       }
-      renderFormattedMessage(fullResponseRef.current, messageContent);
+      if (!fullResponseRef.current) {
+        const json = await response.json();
+        const text = json.choices?.[0]?.message?.content || json.content || json.text || '';
+        fullResponseRef.current = text;
+        renderFormattedMessage(fullResponseRef.current, messageContent);
+      }
       const finalHistory = [...newHistory, { role: 'assistant' as const, content: fullResponseRef.current }];
       setChatHistory(finalHistory);
       updateCurrentConversation(finalHistory);
     } catch (error: any) {
+      setShowThinkingIndicator(false);
       if (typingEl) typingEl.style.display = 'none';
       addMessageToDOM('Sorry, I encountered an error: ' + (error.message || 'Unknown error.'), 'assistant', true);
       setChatHistory(prev => prev.length > 0 && prev[prev.length - 1].role === 'user' ? prev.slice(0, -1) : prev);
     } finally {
+      setShowThinkingIndicator(false);
       setIsStreaming(false);
       setAttachedFiles([]);
       if (chatInputRef.current) chatInputRef.current.focus();
     }
-  }, [isStreaming, chatHistory, currentModel, addMessageToDOM, renderFormattedMessage, scrollToBottom, updateCurrentConversation]);
+  }, [isStreaming, chatHistory, currentModel, extendedThinking, addMessageToDOM, renderFormattedMessage, scrollToBottom, updateCurrentConversation]);
 
   const handleWelcomeMessage = useCallback(() => {
     const message = welcomeInputRef.current?.value.trim() || (attachedFiles.length > 0 ? '' : '');
@@ -584,23 +828,6 @@ export default function ClaudeInterface() {
     if (chatInputRef.current) { chatInputRef.current.value = ''; autoResize(chatInputRef.current); }
     sendMessage(message, attachedFiles);
   }, [isStreaming, attachedFiles, sendMessage, autoResize]);
-
-  const handleManualAuth = useCallback(async () => {
-    const puter = (window as any).puter;
-    if (!puter) { setAuthStatus('failed'); return; }
-    try {
-      setAuthStatus('authenticating');
-      const authResponse = await puter.ai.chat('test', { model: 'claude-sonnet-4' });
-      if (authResponse && (authResponse.message?.content || authResponse.success !== false)) {
-        setAuthStatus('success');
-        localStorage.setItem('claude-puter-auth', 'true');
-      } else throw new Error('Authentication failed.');
-    } catch (error) {
-      setAuthStatus('failed');
-      localStorage.removeItem('claude-puter-auth');
-      alert('⚠️ AUTHENTICATION FAILED!\n\nTry:\n1. Use Incognito/Private Mode\n2. Disable ad-blockers\n3. Clear site data for puter.com\n4. Allow third-party cookies');
-    }
-  }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>, type: 'welcome' | 'chat') => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (type === 'welcome') handleWelcomeMessage(); else handleChatMessage(); }
@@ -625,8 +852,7 @@ export default function ClaudeInterface() {
   }, [chatHistory, addMessageToDOM]);
 
   return (
-    <>
-      <Script src="https://js.puter.com/v2/" strategy="beforeInteractive" />
+    <Fragment>
       <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} style={{ display: 'none' }}
         accept="image/*,.pdf,.doc,.docx,.txt,.csv,.json,.xml,.html,.css,.js,.ts,.py,.java,.c,.cpp,.go,.rs,.rb,.php,.sql,.md,.yaml,.yml,.zip,.rar,.7z,.mp3,.mp4,.wav,.xlsx,.xls,.ppt,.pptx" />
       
@@ -648,8 +874,8 @@ export default function ClaudeInterface() {
         <div className="sidebar">
           <div className="sidebar-header">
             <div className="logo">
-              <img src="/favicon.svg" alt="Claude" className="claude-logo" />
-              Claude
+              <img src="/favicon.svg" alt="Super Z" className="sz-logo" />
+              Super Z
             </div>
             <button className="new-chat-btn" onClick={startNewChat}>
               <div className="plus-icon">+</div>
@@ -667,6 +893,7 @@ export default function ClaudeInterface() {
                 <svg className="nav-icon" viewBox="0 0 24 24" fill="currentColor"><path d={nav.icon} /></svg>
                 {nav.label}
                 {nav.tab === 'artifacts' && allArtifacts.length > 0 && <span className="nav-badge">{allArtifacts.length}</span>}
+                {nav.tab === 'projects' && projects.length > 0 && <span className="nav-badge" style={{ backgroundColor: '#3a2a0a', color: '#fbbf24' }}>{projects.length}</span>}
               </div>
             ))}
           </div>
@@ -701,33 +928,154 @@ export default function ClaudeInterface() {
             )}
             {sidebarTab === 'projects' && (
               <>
-                <div className="section-title">Projects</div>
-                <div className="projects-panel">
-                  <div className="projects-empty">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.3, marginBottom: '12px' }}>
-                      <path d="M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
-                    </svg>
-                    <p style={{ color: '#808080', fontSize: '13px', textAlign: 'center', lineHeight: '1.5' }}>
-                      Organize your conversations<br />into projects
-                    </p>
-                    <div className="projects-features">
-                      <div className="project-feature-item">
-                        <span style={{ color: '#ff6b35' }}>📁</span>
-                        <span>Group related chats</span>
-                      </div>
-                      <div className="project-feature-item">
-                        <span style={{ color: '#ff6b35' }}>🏷️</span>
-                        <span>Label by topic</span>
-                      </div>
-                      <div className="project-feature-item">
-                        <span style={{ color: '#ff6b35' }}>🔍</span>
-                        <span>Quick search</span>
-                      </div>
+                <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Projects</span>
+                  <button className="project-create-btn" onClick={() => setShowCreateProject(true)} title="New project">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                  </button>
+                </div>
+
+                {/* Create Project Form */}
+                {showCreateProject && (
+                  <div className="project-create-form">
+                    <div className="project-form-header">
+                      <span style={{ fontWeight: 500, fontSize: '13px' }}>New Project</span>
+                      <button onClick={() => setShowCreateProject(false)} style={{ background: 'none', border: 'none', color: '#808080', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}>✕</button>
                     </div>
-                    <p style={{ color: '#555', fontSize: '12px', marginTop: '12px' }}>
-                      Coming soon in a future update!
-                    </p>
+                    <input
+                      className="project-input"
+                      type="text"
+                      placeholder="Project name *"
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && newProjectName.trim()) createProject(newProjectName, newProjectDesc, newProjectColor); }}
+                      autoFocus
+                    />
+                    <input
+                      className="project-input"
+                      type="text"
+                      placeholder="Description (optional)"
+                      value={newProjectDesc}
+                      onChange={(e) => setNewProjectDesc(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && newProjectName.trim()) createProject(newProjectName, newProjectDesc, newProjectColor); }}
+                    />
+                    <div className="project-color-picker">
+                      {PROJECT_COLORS.map(color => (
+                        <button
+                          key={color}
+                          className={`project-color-dot ${newProjectColor === color ? 'project-color-active' : ''}`}
+                          style={{ backgroundColor: color }}
+                          onClick={() => setNewProjectColor(color)}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      className="project-submit-btn"
+                      disabled={!newProjectName.trim()}
+                      onClick={() => createProject(newProjectName, newProjectDesc, newProjectColor)}
+                      style={{ opacity: newProjectName.trim() ? 1 : 0.5 }}
+                    >
+                      Create Project
+                    </button>
                   </div>
+                )}
+
+                {/* Project List */}
+                <div className="projects-list">
+                  {projects.length === 0 && !showCreateProject ? (
+                    <div className="empty-state">
+                      <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.2, marginBottom: '8px' }}>
+                        <path d="M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                      </svg>
+                      <span>No projects yet</span>
+                      <button className="project-empty-create-btn" onClick={() => setShowCreateProject(true)}>
+                        + Create your first project
+                      </button>
+                    </div>
+                  ) : (
+                    projects.map(project => {
+                      const convs = getConversationsForProject(project.id);
+                      const isExpanded = expandedProject === project.id;
+                      const isEditing = editingProject === project.id;
+                      const unassignedConvs = recentConversations.filter(c => !c.projectId && c.messages.length > 0);
+
+                      return (
+                        <div key={project.id} className="project-card">
+                          <div className="project-card-header" onClick={() => setExpandedProject(isExpanded ? null : project.id)}>
+                            <div className="project-color-bar" style={{ backgroundColor: project.color }} />
+                            <div className="project-card-info">
+                              {isEditing ? (
+                                <input
+                                  className="project-rename-input"
+                                  value={editingProjectName}
+                                  onChange={(e) => setEditingProjectName(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') renameProject(project.id, editingProjectName); if (e.key === 'Escape') setEditingProject(null); }}
+                                  onBlur={() => renameProject(project.id, editingProjectName)}
+                                  autoFocus
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              ) : (
+                                <span className="project-card-name">{project.name}</span>
+                              )}
+                              <span className="project-card-meta">{convs.length} chat{convs.length !== 1 ? 's' : ''}{project.description ? ` · ${project.description}` : ''}</span>
+                            </div>
+                            <div className="project-card-chevron" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="project-card-body">
+                              <div className="project-card-actions">
+                                <button className="project-action-btn" onClick={() => { setEditingProject(project.id); setEditingProjectName(project.name); }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                                  Rename
+                                </button>
+                                <button className="project-action-btn project-action-btn-assign" onClick={() => { setShowAssignModal(true); setAssignTargetProject(project.id); }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
+                                  Add chat
+                                </button>
+                                <button className="project-action-btn project-action-btn-delete" onClick={() => { if (confirm(`Delete project "${project.name}"? Chats will be unassigned, not deleted.`)) deleteProject(project.id); }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                                  Delete
+                                </button>
+                              </div>
+
+                              {/* Conversations in this project */}
+                              {convs.length > 0 ? (
+                                <div className="project-conversations">
+                                  {convs.map(conv => (
+                                    <div key={conv.id} className="project-conv-item">
+                                      <div className="project-conv-info" onClick={() => loadConversation(conv.id)}>
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.5, flexShrink: 0 }}><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
+                                        <span className="project-conv-title">{conv.title}</span>
+                                      </div>
+                                      <button
+                                        className="project-conv-remove"
+                                        onClick={() => assignConversationToProject(conv.id, null)}
+                                        title="Remove from project"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="project-empty-convs">
+                                  <span>No chats in this project yet</span>
+                                  {unassignedConvs.length > 0 && (
+                                    <button className="project-quick-assign" onClick={() => { setShowAssignModal(true); setAssignTargetProject(project.id); }}>
+                                      + Add a chat
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </>
             )}
@@ -772,9 +1120,9 @@ export default function ClaudeInterface() {
                     <div className="user-menu-name" contentEditable suppressContentEditableWarning onBlur={(e) => {
                       const newName = e.currentTarget.textContent?.trim() || 'User';
                       setUserName(newName);
-                      localStorage.setItem('claude-user-name', newName);
+                      localStorage.setItem('sz-user-name', newName);
                     }}>{userName}</div>
-                    <div className="user-menu-plan">{userPlan} via Puter.js {firebaseUserId && <span style={{ opacity: 0.5 }}> · ☁️ Synced</span>}</div>
+                    <div className="user-menu-plan">{userPlan}{firebaseUserId && <span style={{ opacity: 0.5 }}> · ☁️ Synced</span>}</div>
                   </div>
                 </div>
                 <div className="user-menu-divider" />
@@ -801,7 +1149,7 @@ export default function ClaudeInterface() {
                 </div>
                 <div className="user-menu-divider" />
                 <div className="user-menu-item user-menu-footer" onClick={() => setShowUserMenu(false)}>
-                  Claude Interface v1.0 &middot; Powered by Puter.js
+                  Super Z v2.0 &middot; Powered by z-ai-web-dev-sdk
                 </div>
               </div>
             )}
@@ -865,25 +1213,11 @@ export default function ClaudeInterface() {
                   </div>
                 </div>
 
-                {authStatus !== 'success' && (<div id="authBox" className="auth-box">
-                  <div style={{ fontSize: '13px', color: '#b3b3b3', textAlign: 'center', marginBottom: '10px' }}>
-                    💡 <strong>First time?</strong> A popup will appear for authentication - please allow it
-                  </div>
-                  <div id="protocolNotice" style={{ fontSize: '12px', color: '#808080', textAlign: 'center', marginBottom: '10px' }}>{protocolNotice}</div>
-                  <div style={{ textAlign: 'center' }}>
-                    <button id="authButton" onClick={handleManualAuth} disabled={authStatus === 'authenticating'}
-                      style={{ backgroundColor: authStatus === 'success' ? '#22c55e' : authStatus === 'failed' ? '#dc2626' : '#ff6b35', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: authStatus === 'authenticating' ? 'not-allowed' : 'pointer', fontSize: '12px' }}>
-                      {authStatus === 'idle' ? '🔐 Authenticate with Puter' : authStatus === 'authenticating' ? '🔄 Authenticating...' : authStatus === 'success' ? '✅ Authenticated' : '❌ Auth Failed - Retry'}
-                    </button>
-                  </div>
-                </div>
-                )}
-
                 <div className="model-selector">
                   <div className="model-dropdown" ref={modelDropdownRef}>
                     <button className="model-btn" onClick={() => setShowModelDropdown(!showModelDropdown)}>
-                      <span id="currentModel">{availableModels.find(m => m.apiName === currentModel)?.displayName || 'Claude Sonnet 4'}</span>
-                      <span className="model-tier-badge model-tier-badge-{availableModels.find(m => m.apiName === currentModel)?.tier || 'free'}">{availableModels.find(m => m.apiName === currentModel)?.tier === 'premium' ? '✨' : '⚡'}</span>
+                      <span id="currentModel">{availableModels.find(m => m.apiName === currentModel)?.displayName || 'Super Z Opus 4.6'}</span>
+                      <span className="model-tier-badge model-tier-badge-{availableModels.find(m => m.apiName === currentModel)?.tier || 'premium'}">{availableModels.find(m => m.apiName === currentModel)?.tier === 'premium' ? '✨' : '⚡'}</span>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
                     </button>
                     {showModelDropdown && (
@@ -892,14 +1226,38 @@ export default function ClaudeInterface() {
                           <div key={model.apiName} className={`model-dropdown-item ${currentModel === model.apiName ? 'model-dropdown-active' : ''}`} onClick={() => { setCurrentModel(model.apiName); setShowModelDropdown(false); }}>
                             <div className="model-dropdown-info">
                               <span className="model-dropdown-name">{model.displayName}</span>
-                              <span className="model-tier-badge model-tier-badge-{model.tier}">{model.tier === 'premium' ? '✨ Premium' : '⚡ Free'}</span>
+                              <div className="model-dropdown-meta">
+                                <span className="model-tier-badge model-tier-badge-{model.tier}">{model.tier === 'premium' ? '✨ Premium' : '⚡ Free'}</span>
+                                <span className="model-dropdown-desc">{model.description}</span>
+                              </div>
                             </div>
                             {currentModel === model.apiName && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.6 }}><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>}
                           </div>
                         ))}
+                        {availableModels.find(m => m.apiName === currentModel)?.supportsThinking && (
+                          <div className="model-dropdown-divider" />
+                        )}
+                        <div className={`model-dropdown-thinking ${availableModels.find(m => m.apiName === currentModel)?.supportsThinking ? '' : 'thinking-disabled'}`} onClick={(e) => { e.stopPropagation(); }}>
+                          <label className="thinking-toggle-label">
+                            <div className="thinking-toggle-switch">
+                              <input type="checkbox" checked={extendedThinking && availableModels.find(m => m.apiName === currentModel)?.supportsThinking} disabled={!availableModels.find(m => m.apiName === currentModel)?.supportsThinking} onChange={(e) => setExtendedThinking(e.target.checked)} />
+                              <span className="thinking-toggle-slider" />
+                            </div>
+                            <div className="thinking-toggle-text">
+                              <span className="thinking-toggle-title">Extended Thinking</span>
+                              <span className="thinking-toggle-desc">{availableModels.find(m => m.apiName === currentModel)?.supportsThinking ? 'Deep reasoning before responding' : 'Only available with ✨ Premium models'}</span>
+                            </div>
+                          </label>
+                        </div>
                       </div>
                     )}
                   </div>
+                  {extendedThinking && availableModels.find(m => m.apiName === currentModel)?.supportsThinking && (
+                    <div className="thinking-badge" onClick={() => setShowModelDropdown(true)}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                      Extended thinking enabled
+                    </div>
+                  )}
                 </div>
 
                 <div className="action-buttons">
@@ -925,7 +1283,10 @@ export default function ClaudeInterface() {
               <div className="chat-messages" id="chatMessages" ref={chatMessagesRef} />
               <div className="typing-indicator" id="typingIndicator">
                 <div className="message-avatar"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg></div>
-                <span>Claude is typing</span>
+                <div className="typing-text-area">
+                  <span>{showThinkingIndicator ? 'Super Z is thinking deeply...' : 'Super Z is typing'}</span>
+                  <div className={`thinking-spinner ${showThinkingIndicator ? 'thinking-spinner-active' : ''}`} />
+                </div>
                 <div className="typing-dots"><div className="typing-dot"></div><div className="typing-dot"></div><div className="typing-dot"></div></div>
               </div>
               <div className="chat-input-area">
@@ -958,7 +1319,7 @@ export default function ClaudeInterface() {
                     </div>
                   )}
                   <div className="chat-input-row">
-                    <textarea className="chat-textarea" ref={chatInputRef} placeholder="Message Claude..." rows={1}
+                    <textarea className="chat-textarea" ref={chatInputRef} placeholder="Message Super Z..." rows={1}
                       disabled={isStreaming} onInput={(e) => autoResize(e.target as HTMLTextAreaElement)}
                       onKeyDown={(e) => handleKeyDown(e, 'chat')} style={{ opacity: isStreaming ? 0.6 : 1 }} />
                     <div className="chat-input-actions">
@@ -983,218 +1344,65 @@ export default function ClaudeInterface() {
         </div>
       </div>
 
-      <style jsx global>{`
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background-color: #1a1a1a; color: #e5e5e5; height: 100vh; overflow: hidden; }
-        .container { display: flex; height: 100vh; }
+      {/* Drag & Drop Overlay */}
+      {isDraggingOver && (
+        <div className="drop-overlay">
+          <div className="drop-overlay-content">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+            <div className="drop-overlay-title">Drop files to attach</div>
+            <div className="drop-overlay-subtitle">Images, PDFs, documents, code files, and more</div>
+          </div>
+        </div>
+      )}
 
-        /* Sidebar */
-        .sidebar { width: 280px; background-color: #262626; border-right: 1px solid #404040; display: flex; flex-direction: column; position: relative; }
-        .sidebar-header { padding: 16px; border-bottom: 1px solid #404040; }
-        .logo { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 16px; }
-        .claude-logo { width: 24px; height: 24px; border-radius: 6px; }
-        .back-arrow { width: 20px; height: 20px; opacity: 0.7; }
-        .new-chat-btn { display: flex; align-items: center; gap: 8px; background: none; border: none; color: #ff6b35; font-size: 14px; padding: 8px 0; cursor: pointer; transition: opacity 0.2s; }
-        .new-chat-btn:hover { opacity: 0.8; }
-        .plus-icon { width: 16px; height: 16px; background-color: #ff6b35; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; color: white; }
-        .sidebar-nav { padding: 16px; border-bottom: 1px solid #404040; display: flex; flex-direction: column; gap: 4px; }
-        .nav-item { display: flex; align-items: center; gap: 12px; padding: 8px 12px; color: #b3b3b3; font-size: 14px; cursor: pointer; transition: all 0.15s; border-radius: 6px; position: relative; }
-        .nav-item:hover { color: #fff; background-color: #333; }
-        .nav-item-active { color: #fff !important; background-color: #404040 !important; }
-        .nav-item-active .nav-icon { opacity: 1; }
-        .nav-icon { width: 16px; height: 16px; opacity: 0.7; flex-shrink: 0; }
-        .nav-badge { position: absolute; right: 8px; background-color: #ff6b35; color: white; font-size: 10px; padding: 1px 6px; border-radius: 10px; font-weight: 600; }
-        .sidebar-content { flex: 1; padding: 16px; overflow-y: auto; }
-        .section-title { font-size: 12px; color: #808080; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .recent-items { min-height: 20px; }
-        .recent-item-wrapper { position: relative; }
-        .recent-item { padding: 8px 12px; color: #b3b3b3; font-size: 13px; cursor: pointer; transition: all 0.15s; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 6px; }
-        .recent-item:hover { color: #fff; background-color: #333; }
-        .recent-item-wrapper:hover .delete-btn { opacity: 1; }
-        .delete-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #808080; cursor: pointer; padding: 4px; border-radius: 4px; opacity: 0; transition: all 0.15s; }
-        .delete-btn:hover { color: #ff6b6b; background-color: #404040; }
-        .delete-confirm { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 4px; background: #2a2a2a; border: 1px solid #404040; border-radius: 6px; padding: 2px 6px; font-size: 11px; z-index: 10; }
-        .delete-confirm span { color: #b3b3b3; }
-        .delete-yes { background: #dc2626; color: white; border: none; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
-        .delete-no { background: #404040; color: white; border: none; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
-        .empty-state { padding: 16px 0; text-align: center; color: #666; font-size: 13px; font-style: italic; }
+      {/* Assign Chat Modal */}
+      {showAssignModal && assignTargetProject && (
+        <div className="assign-modal-overlay" onClick={() => setShowAssignModal(false)}>
+          <div className="assign-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="assign-modal-header">
+              <div>
+                <div className="assign-modal-title">Add chat to project</div>
+                <div className="assign-modal-subtitle">{projects.find(p => p.id === assignTargetProject)?.name}</div>
+              </div>
+              <button className="assign-modal-close" onClick={() => setShowAssignModal(false)}>✕</button>
+            </div>
+            <div className="assign-modal-body">
+              {recentConversations.filter(c => !c.projectId && c.messages.length > 0).length === 0 ? (
+                <div className="assign-modal-empty">No unassigned chats available. Start a new chat first!</div>
+              ) : (
+                recentConversations.filter(c => c.projectId !== assignTargetProject && c.messages.length > 0).map(conv => {
+                  const isAlreadyAssigned = conv.projectId === assignTargetProject;
+                  return (
+                    <div key={conv.id} className={`assign-modal-item ${isAlreadyAssigned ? 'assign-modal-item-assigned' : ''}`} onClick={() => { if (!isAlreadyAssigned) { assignConversationToProject(conv.id, assignTargetProject); } }}>
+                      <div className="assign-modal-item-info">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.5, flexShrink: 0 }}><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
+                        <div>
+                          <div className="assign-modal-item-title">{conv.title}</div>
+                          <div className="assign-modal-item-meta">{conv.messages.length} messages</div>
+                        </div>
+                      </div>
+                      {isAlreadyAssigned ? (
+                        <span className="assign-modal-badge">Already added</span>
+                      ) : conv.projectId ? (
+                        <button className="assign-modal-move-btn" onClick={(e) => { e.stopPropagation(); assignConversationToProject(conv.id, assignTargetProject); }}>
+                          Move
+                        </button>
+                      ) : (
+                        <button className="assign-modal-add-btn" onClick={(e) => { e.stopPropagation(); assignConversationToProject(conv.id, assignTargetProject); }}>
+                          + Add
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
-        /* Projects panel */
-        .projects-panel { padding: 8px 0; }
-        .projects-empty { display: flex; flex-direction: column; align-items: center; padding: 24px 12px; }
-        .projects-features { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; width: 100%; }
-        .project-feature-item { display: flex; align-items: center; gap: 10px; color: #b3b3b3; font-size: 13px; padding: 8px 12px; background-color: #2a2a2a; border-radius: 6px; }
-
-        /* Artifacts sidebar */
-        .artifact-sidebar-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; border-radius: 6px; transition: all 0.15s; }
-        .artifact-sidebar-item:hover { background-color: #333; }
-        .artifact-sidebar-lang { font-size: 10px; font-weight: 700; color: #ff6b35; background-color: #2a2a2a; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; flex-shrink: 0; }
-        .artifact-sidebar-info { flex: 1; overflow: hidden; }
-        .artifact-sidebar-title { font-size: 12px; color: #b3b3b3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .artifact-sidebar-meta { font-size: 11px; color: #666; }
-
-        /* User menu */
-        .sidebar-footer { padding: 16px; border-top: 1px solid #404040; position: relative; }
-        .user-info { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px; border-radius: 6px; transition: background-color 0.15s; }
-        .user-info:hover { background-color: #333; }
-        .user-avatar { width: 24px; height: 24px; background-color: #ff6b35; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: white; flex-shrink: 0; }
-        .user-details { flex: 1; overflow: hidden; }
-        .user-name { font-size: 14px; color: #fff; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .user-plan { font-size: 12px; color: #808080; }
-        .chevron-down { width: 16px; height: 16px; opacity: 0.5; transition: transform 0.2s; flex-shrink: 0; }
-        .chevron-up { transform: rotate(180deg); }
-        .user-menu { position: absolute; bottom: 70px; left: 16px; right: 16px; background-color: #2a2a2a; border: 1px solid #404040; border-radius: 10px; padding: 8px; z-index: 100; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
-        .user-menu-header { display: flex; align-items: center; gap: 10px; padding: 12px 8px; }
-        .user-menu-avatar { width: 36px; height: 36px; background-color: #ff6b35; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; color: white; flex-shrink: 0; }
-        .user-menu-name { font-size: 15px; color: #fff; font-weight: 600; outline: none; border-bottom: 1px dashed transparent; padding: 1px 0; }
-        .user-menu-name:focus { border-bottom-color: #ff6b35; }
-        .user-menu-plan { font-size: 12px; color: #808080; margin-top: 2px; }
-        .user-menu-divider { height: 1px; background-color: #404040; margin: 4px 0; }
-        .user-menu-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; color: #b3b3b3; font-size: 13px; cursor: pointer; border-radius: 6px; transition: all 0.15s; }
-        .user-menu-item:hover { background-color: #404040; color: #fff; }
-        .user-menu-footer { font-size: 11px !important; color: #555 !important; justify-content: center; cursor: default !important; padding: 8px !important; }
-        .user-menu-footer:hover { background-color: transparent !important; color: #555 !important; }
-
-        /* Main Content - full viewport height, no overflow */
-        .main-content { flex: 1; height: 100vh; overflow: hidden; display: flex; flex-direction: column; background-color: #1a1a1a; min-width: 0; }
-
-        /* Welcome screen - centered, scrollable if needed */
-        .welcome-screen { height: 100%; display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: 20px; }
-        .welcome-inner { max-width: 600px; width: 100%; display: flex; flex-direction: column; align-items: center; padding: 40px 0; }
-
-        /* Chat view - fills entire main-content, column layout */
-        .chat-view { height: 100%; display: flex; flex-direction: column; }
-
-        /* Chat messages - scrollable area */
-        .chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; min-height: 0; scrollbar-width: thin; scrollbar-color: #404040 #262626; scroll-behavior: smooth; }
-        .chat-messages::-webkit-scrollbar { width: 8px; }
-        .chat-messages::-webkit-scrollbar-track { background: #262626; border-radius: 4px; }
-        .chat-messages::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
-        .chat-messages::-webkit-scrollbar-thumb:hover { background: #555; }
-        .message { margin-bottom: 24px; display: flex; gap: 12px; }
-        .message.user { flex-direction: row-reverse; }
-        .message-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
-        .message.user .message-avatar { background-color: #ff6b35; color: white; }
-        .message.assistant .message-avatar { background-color: #4a90e2; color: white; }
-        .message-content { max-width: 70%; background-color: #262626; border-radius: 12px; padding: 16px; color: #e5e5e5; line-height: 1.5; word-wrap: break-word; overflow-wrap: break-word; white-space: pre-wrap; }
-        .message.assistant .message-content { padding: 0; }
-        .message-text-part { padding: 16px; white-space: pre-wrap; }
-        .message.user .message-content { background-color: #ff6b35; color: white; padding: 16px; }
-
-        /* Attachments in messages */
-        .attachments-preview-in-message { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 12px 0 12px; }
-        .attachment-chip-in-message { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.1); border-radius: 8px; padding: 6px 10px; max-width: 240px; }
-        .attachment-thumb-in-message { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
-        .attachment-info-in-message { display: flex; flex-direction: column; overflow: hidden; }
-        .attachment-name-in-message { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .attachment-size-in-message { font-size: 11px; opacity: 0.7; }
-
-        /* Typing indicator */
-        .typing-indicator { display: none; align-items: center; gap: 8px; color: #808080; font-style: italic; padding: 16px; }
-        .typing-dots { display: flex; gap: 4px; }
-        .typing-dot { width: 6px; height: 6px; background-color: #808080; border-radius: 50%; animation: typing 1.4s infinite ease-in-out; }
-        .typing-dot:nth-child(1) { animation-delay: -0.32s; }
-        .typing-dot:nth-child(2) { animation-delay: -0.16s; }
-        @keyframes typing { 0%, 80%, 100% { transform: scale(1); opacity: 0.5; } 40% { transform: scale(1.2); opacity: 1; } }
-        .greeting { display: flex; align-items: center; gap: 12px; margin-bottom: 40px; font-size: 32px; font-weight: 400; color: #fff; }
-        .sun-icon { width: 32px; height: 32px; color: #ff6b35; }
-
-        /* Search / Input (welcome screen) */
-        .search-container { width: 100%; max-width: 600px; position: relative; margin-bottom: 20px; }
-        .search-input { width: 100%; padding: 16px 160px 16px 16px; background-color: #262626; border: 1px solid #404040; border-radius: 12px; color: #fff; font-size: 16px; outline: none; transition: border-color 0.2s; resize: none; min-height: 50px; max-height: 150px; font-family: inherit; }
-        .search-input:focus { border-color: #ff6b35; }
-        .search-input::placeholder { color: #808080; }
-        .search-actions { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; gap: 4px; align-items: center; }
-
-        /* Chat input area - always visible at bottom */
-        .chat-input-area { flex-shrink: 0; padding: 10px 20px 20px; }
-        .chat-input-inner { max-width: 700px; margin: 0 auto; }
-        .chat-input-row { position: relative; display: flex; align-items: flex-end; gap: 8px; background-color: #262626; border: 1px solid #404040; border-radius: 12px; padding: 8px 8px 8px 16px; transition: border-color 0.2s; }
-        .chat-input-row:focus-within { border-color: #ff6b35; }
-        .chat-textarea { flex: 1; background: none; border: none; color: #fff; font-size: 16px; outline: none; resize: none; min-height: 36px; max-height: 150px; padding: 8px 0; font-family: inherit; line-height: 1.4; }
-        .chat-textarea::placeholder { color: #808080; }
-        .chat-input-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; padding-bottom: 2px; }
-        .search-btn { padding: 8px; background: none; border: none; color: #808080; cursor: pointer; border-radius: 6px; transition: background-color 0.2s; font-size: 13px; }
-        .search-btn:hover { background-color: #404040; }
-        .attach-btn { padding: 6px; background: none; border: none; color: #808080; cursor: pointer; border-radius: 6px; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
-        .attach-btn:hover { background-color: #404040; color: #ff6b35; }
-        .send-btn { padding: 8px; background-color: #ff6b35; border: none; color: white; cursor: pointer; border-radius: 6px; transition: background-color 0.2s; display: flex; align-items: center; justify-content: center; }
-        .send-btn:hover { background-color: #e55a2b; }
-        .send-btn:disabled { background-color: #404040; cursor: not-allowed; }
-        .model-btn { display: flex; align-items: center; gap: 8px; background: none; border: none; color: #b3b3b3; font-size: 14px; cursor: pointer; padding: 8px 12px; border-radius: 6px; transition: background-color 0.2s; }
-        .model-btn:hover { background-color: #262626; }
-        .model-selector { align-self: flex-end; margin-bottom: 16px; position: relative; }
-        .model-dropdown { position: relative; }
-        .model-dropdown-list { position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background-color: #2a2a2a; border: 1px solid #404040; border-radius: 10px; padding: 6px; min-width: 240px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); z-index: 200; max-height: 400px; overflow-y: auto; }
-        .model-dropdown-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; cursor: pointer; transition: background-color 0.15s; gap: 8px; }
-        .model-dropdown-item:hover { background-color: #333; }
-        .model-dropdown-active { background-color: #333; }
-        .model-dropdown-info { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-        .model-dropdown-name { font-size: 13px; color: #e5e5e5; white-space: nowrap; }
-        .model-tier-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; }
-        .model-tier-badge-free { background-color: #1a3a1a; color: #4ade80; }
-        .model-tier-badge-premium { background-color: #3a2a0a; color: #fbbf24; }
-        .chat-model-btn { flex-direction: row; }
-        .action-buttons { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
-        .action-btn { display: flex; align-items: center; gap: 8px; padding: 12px 20px; background-color: #262626; border: 1px solid #404040; border-radius: 8px; color: #e5e5e5; font-size: 14px; cursor: pointer; transition: all 0.2s; text-decoration: none; }
-        .action-btn:hover { background-color: #333; border-color: #555; transform: translateY(-1px); }
-        .action-icon { width: 16px; height: 16px; opacity: 0.8; }
-        .auth-box { max-width: 600px; marginBottom: '15px'; padding: 12px; background-color: #2a2a2a; border-radius: 8px; border: 1px solid #404040; }
-
-        /* Attachments bar */
-        .attachments-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; padding: 0 4px; }
-        .attachment-chip { display: flex; align-items: center; gap: 8px; background-color: #2a2a2a; border: 1px solid #404040; border-radius: 8px; padding: 6px 10px; max-width: 220px; transition: border-color 0.2s; }
-        .attachment-chip:hover { border-color: #ff6b35; }
-        .attachment-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; }
-        .attachment-info { display: flex; flex-direction: column; overflow: hidden; }
-        .attachment-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
-        .attachment-size { font-size: 11px; color: #808080; }
-        .attachment-remove { background: none; border: none; color: #808080; cursor: pointer; padding: 2px; font-size: 12px; flex-shrink: 0; border-radius: 4px; }
-        .attachment-remove:hover { color: #ff6b6b; background-color: #404040; }
-
-        /* Attachment states */
-        .attachment-chip-loading { border-color: #4a90e2; background-color: rgba(74, 144, 226, 0.08); }
-        .attachment-chip-ready { border-color: #22c55e; }
-        .attachment-chip-error { border-color: #dc2626; background-color: rgba(220, 38, 38, 0.08); }
-        .attachment-spinner { width: 24px; height: 24px; border: 2px solid #404040; border-top-color: #4a90e2; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .attachment-file-icon { font-size: 20px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-        .attachment-error-icon { font-size: 20px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-        .attachment-size-loading { color: #4a90e2 !important; }
-
-        /* Upload Toast */
-        .upload-toast { position: fixed; top: 20px; right: 20px; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; color: #fff; font-size: 14px; z-index: 10000; box-shadow: 0 8px 32px rgba(0,0,0,0.5); animation: slideIn 0.3s ease-out; max-width: 400px; }
-        .upload-toast-success { background: linear-gradient(135deg, #16a34a, #22c55e); }
-        .upload-toast-error { background: linear-gradient(135deg, #b91c1c, #dc2626); }
-        .upload-toast-info { background: linear-gradient(135deg, #1d4ed8, #3b82f6); }
-        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        .upload-toast-icon { flex-shrink: 0; display: flex; align-items: center; }
-        .upload-toast span { flex: 1; }
-        .upload-toast-close { background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; padding: 2px 4px; font-size: 12px; border-radius: 4px; flex-shrink: 0; }
-        .upload-toast-close:hover { color: #fff; background: rgba(255,255,255,0.2); }
-
-        /* Artifacts */
-        .artifact-canvas { background-color: #0d0d0d; border: 1px solid #404040; border-radius: 8px; margin: 16px; overflow: hidden; }
-        .artifact-header { display: flex; justify-content: space-between; align-items: center; background-color: #2a2a2a; padding: 8px 12px; border-bottom: 1px solid #404040; }
-        .artifact-title { font-size: 13px; font-weight: 500; color: #b3b3b3; }
-        .artifact-actions { display: flex; gap: 8px; }
-        .artifact-btn { background: none; border: 1px solid #555; color: #b3b3b3; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px; transition: all 0.2s; }
-        .artifact-btn:hover { background-color: #404040; color: #fff; }
-        .artifact-btn.view-btn { border-color: #4a90e2; color: #4a90e2; }
-        .artifact-btn.view-btn:hover { background-color: #4a90e2; color: #fff; }
-        .artifact-btn svg { width: 14px; height: 14px; }
-        .artifact-code { padding: 12px; max-height: 400px; overflow: auto; scrollbar-width: thin; scrollbar-color: #404040 #1a1a1a; }
-        .artifact-code pre { margin: 0; }
-        .artifact-code code { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 13px; color: #e5e5e5; white-space: pre; }
-
-        @media (max-width: 768px) {
-          .sidebar { width: 240px; }
-          .greeting { font-size: 24px; }
-          .action-buttons { flex-direction: column; width: 100%; }
-          .action-btn { justify-content: center; }
-          .message-content { max-width: 85%; }
-        }
-      `}</style>
-    </>
+    </Fragment>
   );
 }

@@ -13,21 +13,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Claude Interface - Unlimited Free AI",
+  title: "Super Z — Premium AI Assistant",
   description:
-    "A fully functional, self-hosted web interface for Anthropic's Claude AI, powered by Puter.js. 100% free, no backend required.",
-  keywords: ["Claude", "AI", "Chat", "Puter", "Anthropic", "Free AI"],
+    "Super Z is the most powerful AI assistant — expert-level skills across every domain. Free, unlimited, premium AI experience.",
+  keywords: ["Super Z", "AI", "Chat", "Premium AI", "Z.ai", "Free AI", "Code", "Assistant", "Full-stack"],
   icons: {
     icon: [
       { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/claude-icon.png", sizes: "1024x1024", type: "image/png" },
+      { url: "/superz-icon.png", sizes: "1024x1024", type: "image/png" },
     ],
-    apple: "/claude-icon.png",
+    apple: "/superz-icon.png",
   },
   openGraph: {
-    title: "Claude Interface - Unlimited Free AI",
+    title: "Super Z — Premium AI Assistant",
     description:
-      "Free, self-hosted Claude AI interface powered by Puter.js",
+      "Free, unlimited premium AI assistant by Super Z.",
     type: "website",
   },
 };
