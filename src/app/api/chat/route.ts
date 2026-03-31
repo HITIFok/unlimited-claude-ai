@@ -16,9 +16,22 @@ const MODEL_MAP: Record<string, string> = {
 
 let zaiInstance: any = null;
 
+function getZAIConfig() {
+  return {
+    baseUrl: process.env.ZAI_BASE_URL || 'https://z-ai-web-dev.z.ai/v1',
+    apiKey: process.env.ZAI_API_KEY || 'Z.ai',
+    chatId: process.env.ZAI_CHAT_ID,
+    token: process.env.ZAI_TOKEN,
+  };
+}
+
 async function getZAI() {
   if (!zaiInstance) {
-    zaiInstance = await ZAI.create();
+    const config = getZAIConfig();
+    if (!config.chatId || !config.token) {
+      throw new Error('Missing ZAI_CHAT_ID or ZAI_TOKEN environment variables');
+    }
+    zaiInstance = new ZAI(config);
   }
   return zaiInstance;
 }
