@@ -1,6 +1,50 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
+
+// ─── File text extraction utility ───
+const TEXT_EXTENSIONS = new Set([
+  '.txt','.csv','.json','.xml','.html','.htm','.css','.js','.ts','.tsx','.jsx',
+  '.py','.java','.c','.cpp','.h','.hpp','.go','.rs','.rb','.php','.sql','.md',
+  '.yaml','.yml','.sh','.bat','.log','.ini','.cfg','.conf','.env','.toml',
+  '.graphql','.gql','.r','.swift','.kt','.dart','.lua','.pl','.ps1','.svg',
+]);
+
+async function extractTextFromFile(att: { base64: string; name: string; type: string }): Promise<string> {
+  const ext = '.' + (att.name.split('.').pop() || '').toLowerCase();
+
+  // Text-based files: decode base64 → UTF-8
+  if (TEXT_EXTENSIONS.has(ext)) {
+    try {
+      const raw = att.base64.includes(',') ? att.base64.split(',')[1] : att.base64;
+      const bytes = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
+      return new TextDecoder('utf-8').decode(bytes);
+    } catch { return ''; }
+  }
+
+  // PDF: extract text with pdfjs-dist
+  if (ext === '.pdf') {
+    try {
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+      const raw = att.base64.includes(',') ? att.base64.split(',')[1] : att.base64;
+      const data = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
+      const pdf = await pdfjsLib.getDocument({ data }).promise;
+      let fullText = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map((item: any) => item.str).join(' ') + '\n';
+      }
+      return fullText.trim();
+    } catch (e) {
+      console.warn('PDF text extraction failed:', e);
+      return '';
+    }
+  }
+
+  return '';
+}
 import { ensureAuth } from '@/lib/firebase';
 import {
   saveConversation as saveConvToFirestore,
@@ -712,23 +756,43 @@ export default function SuperZInterface() {
     if (typingEl) typingEl.style.display = 'flex';
     try {
       setIsStreaming(true);
-      // Build messages with image support
-      const apiMessages = newHistory.map(msg => {
+      // Build API messages with image support + file text extraction
+      const apiMessages: any[] = [];
+      for (const msg of newHistory) {
         if (msg.attachments && msg.attachments.length > 0) {
           const imageAttachments = msg.attachments.filter(a => a.isImage);
+          const nonImageAttachments = msg.attachments.filter(a => !a.isImage);
+
+          // Extract text from non-image files (PDF, code, text, etc.)
+          let fileTexts = '';
+          if (nonImageAttachments.length > 0) {
+            const extracted = await Promise.all(
+              nonImageAttachments.map(async (att) => {
+                const text = await extractTextFromFile(att);
+                if (text) {
+                  return `--- ${att.name} (${formatFileSize(att.size)}) ---\n${text.substring(0, 80000)}\n--- Fin du fichier ---`;
+                }
+                return `[Fichier binaire: ${att.name} (${formatFileSize(att.size)}) — contenu non extractible]`;
+              })
+            );
+            fileTexts = extracted.join('\n\n');
+          }
+
           if (imageAttachments.length > 0) {
-            const content: any[] = [{ type: 'text', text: msg.content || 'Please analyze these images.' }];
+            const content: any[] = [{ type: 'text', text: (msg.content || 'Please analyze these images.') + (fileTexts ? '\n\n' + fileTexts : '') }];
             imageAttachments.forEach(att => {
               content.push({ type: 'image', source: { type: 'base64', media_type: att.type, data: att.base64.split(',')[1] } });
             });
-            return { role: msg.role, content };
+            apiMessages.push({ role: msg.role, content });
+          } else if (fileTexts) {
+            apiMessages.push({ role: msg.role, content: (msg.content || 'Please analyze these files:') + '\n\n' + fileTexts });
+          } else {
+            apiMessages.push({ role: msg.role, content: msg.content });
           }
-          // Non-image files: include info in text
-          const fileInfo = msg.attachments.map(a => `[File: ${a.name} (${formatFileSize(a.size)})]`).join('\n');
-          return { role: msg.role, content: msg.content ? `${msg.content}\n\nAttached files:\n${fileInfo}` : `Please analyze these files:\n${fileInfo}` };
+        } else {
+          apiMessages.push({ role: msg.role, content: msg.content });
         }
-        return { role: msg.role, content: msg.content };
-      });
+      }
       // Build request body for Super Z API (backend route using z-ai-web-dev-sdk)
       const hasImages = newHistory.some(msg => msg.attachments?.some(a => a.isImage));
       const currentModelObj = availableModels.find(m => m.apiName === currentModel);
