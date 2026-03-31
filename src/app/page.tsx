@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
 
-// ─── File text extraction utility ───
+// ─── File text & image extraction utility ───
 const TEXT_EXTENSIONS = new Set([
   '.txt','.csv','.json','.xml','.html','.htm','.css','.js','.ts','.tsx','.jsx',
   '.py','.java','.c','.cpp','.h','.hpp','.go','.rs','.rb','.php','.sql','.md',
@@ -22,28 +22,54 @@ async function extractTextFromFile(att: { base64: string; name: string; type: st
     } catch { return ''; }
   }
 
-  // PDF: extract text with pdfjs-dist
-  if (ext === '.pdf') {
-    try {
-      const pdfjsLib = await import('pdfjs-dist');
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-      const raw = att.base64.includes(',') ? att.base64.split(',')[1] : att.base64;
-      const data = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
-      const pdf = await pdfjsLib.getDocument({ data }).promise;
-      let fullText = '';
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        fullText += content.items.map((item: any) => item.str).join(' ') + '\n';
-      }
-      return fullText.trim();
-    } catch (e) {
-      console.warn('PDF text extraction failed:', e);
-      return '';
-    }
-  }
-
   return '';
+}
+
+/** Render PDF pages as base64 images (for scanned/image PDFs) */
+async function pdfToImages(att: { base64: string; name: string }): Promise<{ text: string; images: string[] }> {
+  try {
+    const pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+    const raw = att.base64.includes(',') ? att.base64.split(',')[1] : att.base64;
+    const data = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
+    const pdf = await pdfjsLib.getDocument({ data }).promise;
+
+    // 1) Try text extraction first
+    let fullText = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      fullText += content.items.map((item: any) => item.str).join(' ') + '\n';
+    }
+    fullText = fullText.trim();
+
+    // 2) If text found → return text, no images needed
+    if (fullText.length > 50) {
+      return { text: fullText, images: [] };
+    }
+
+    // 3) Scanned PDF → render each page as image for vision
+    const images: string[] = [];
+    const MAX_PAGES = 10;
+    for (let i = 1; i <= Math.min(pdf.numPages, MAX_PAGES); i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 2 }); // 2x for better OCR readability
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      // Convert canvas to base64 JPEG
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      images.push(dataUrl);
+      canvas.remove();
+    }
+    return { text: '', images };
+  } catch (e) {
+    console.warn('PDF processing failed:', e);
+    return { text: '', images: [] };
+  }
 }
 import { ensureAuth } from '@/lib/firebase';
 import {
@@ -756,18 +782,20 @@ export default function SuperZInterface() {
     if (typingEl) typingEl.style.display = 'flex';
     try {
       setIsStreaming(true);
-      // Build API messages with image support + file text extraction
+      // Build API messages with image support + file text extraction + PDF vision
       const apiMessages: any[] = [];
+      let hasAnyImages = false;
       for (const msg of newHistory) {
         if (msg.attachments && msg.attachments.length > 0) {
           const imageAttachments = msg.attachments.filter(a => a.isImage);
-          const nonImageAttachments = msg.attachments.filter(a => !a.isImage);
+          const pdfAttachments = msg.attachments.filter(a => a.name.toLowerCase().endsWith('.pdf') && !a.isImage);
+          const otherAttachments = msg.attachments.filter(a => !a.isImage && !a.name.toLowerCase().endsWith('.pdf'));
 
-          // Extract text from non-image files (PDF, code, text, etc.)
-          let fileTexts = '';
-          if (nonImageAttachments.length > 0) {
+          // Extract text from non-image, non-PDF files
+          let otherTexts = '';
+          if (otherAttachments.length > 0) {
             const extracted = await Promise.all(
-              nonImageAttachments.map(async (att) => {
+              otherAttachments.map(async (att) => {
                 const text = await extractTextFromFile(att);
                 if (text) {
                   return `--- ${att.name} (${formatFileSize(att.size)}) ---\n${text.substring(0, 80000)}\n--- Fin du fichier ---`;
@@ -775,17 +803,51 @@ export default function SuperZInterface() {
                 return `[Fichier binaire: ${att.name} (${formatFileSize(att.size)}) — contenu non extractible]`;
               })
             );
-            fileTexts = extracted.join('\n\n');
+            otherTexts = extracted.join('\n\n');
           }
 
-          if (imageAttachments.length > 0) {
-            const content: any[] = [{ type: 'text', text: (msg.content || 'Please analyze these images.') + (fileTexts ? '\n\n' + fileTexts : '') }];
-            imageAttachments.forEach(att => {
-              content.push({ type: 'image', source: { type: 'base64', media_type: att.type, data: att.base64.split(',')[1] } });
-            });
+          // Process PDFs: extract text or render pages as images
+          let pdfTexts = '';
+          const pdfPageImages: string[] = [];
+          if (pdfAttachments.length > 0) {
+            const pdfResults = await Promise.all(pdfAttachments.map(pdfToImages));
+            for (const result of pdfResults) {
+              if (result.text) {
+                pdfTexts += result.text + '\n';
+              }
+              pdfPageImages.push(...result.images);
+            }
+          }
+          if (pdfTexts) pdfTexts = pdfTexts.substring(0, 80000);
+
+          // Collect all image sources (direct images + PDF page images)
+          const allImageSources: { type: string; source: any }[] = [];
+
+          // Direct image attachments
+          imageAttachments.forEach(att => {
+            allImageSources.push({ type: 'image', source: { type: 'base64', media_type: att.type, data: att.base64.split(',')[1] } });
+          });
+
+          // PDF rendered pages
+          pdfPageImages.forEach(dataUrl => {
+            allImageSources.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: dataUrl.split(',')[1] } });
+          });
+
+          const hasImagesForMsg = allImageSources.length > 0;
+          if (hasImagesForMsg) hasAnyImages = true;
+
+          // Build the text part
+          let textParts: string[] = [];
+          textParts.push(msg.content || 'Please analyze the attached files.');
+          if (pdfTexts) textParts.push(pdfTexts);
+          if (otherTexts) textParts.push(otherTexts);
+
+          if (hasImagesForMsg) {
+            const content: any[] = [{ type: 'text', text: textParts.join('\n\n') }];
+            content.push(...allImageSources);
             apiMessages.push({ role: msg.role, content });
-          } else if (fileTexts) {
-            apiMessages.push({ role: msg.role, content: (msg.content || 'Please analyze these files:') + '\n\n' + fileTexts });
+          } else if (pdfTexts || otherTexts) {
+            apiMessages.push({ role: msg.role, content: textParts.join('\n\n') });
           } else {
             apiMessages.push({ role: msg.role, content: msg.content });
           }
@@ -794,7 +856,6 @@ export default function SuperZInterface() {
         }
       }
       // Build request body for Super Z API (backend route using z-ai-web-dev-sdk)
-      const hasImages = newHistory.some(msg => msg.attachments?.some(a => a.isImage));
       const currentModelObj = availableModels.find(m => m.apiName === currentModel);
       const requestBody: any = {
         messages: apiMessages,
@@ -802,7 +863,7 @@ export default function SuperZInterface() {
         system: SUPER_Z_SYSTEM_PROMPT,
         max_tokens: 16384,
         temperature: 1,
-        vision: hasImages,
+        vision: hasAnyImages,
       };
       if (extendedThinking && currentModelObj?.supportsThinking) {
         requestBody.thinking = { type: 'enabled', budget_tokens: 10000 };
