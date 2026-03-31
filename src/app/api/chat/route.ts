@@ -1,4 +1,8 @@
 import { NextRequest } from 'next/server';
+import { writeFile, readFile } from 'fs/promises';
+import path from 'path';
+import os from 'os';
+import ZAI from 'z-ai-web-dev-sdk';
 
 // Translate internal Super Z model names to API model names
 const MODEL_MAP: Record<string, string> = {
@@ -13,30 +17,66 @@ const MODEL_MAP: Record<string, string> = {
   'sz-3-5-haiku': 'claude-3-5-haiku',
 };
 
-function getConfig() {
-  return {
-    baseUrl: process.env.ZAI_BASE_URL || '',
-    apiKey: process.env.ZAI_API_KEY || '',
-    chatId: process.env.ZAI_CHAT_ID || '',
-    token: process.env.ZAI_TOKEN || '',
-  };
+let zaiInstance: any = null;
+
+/**
+ * Ensure .z-ai-config exists in a writable location with env var overrides.
+ * The SDK reads from process.cwd()/.z-ai-config first.
+ * We write a merged config there so the SDK can find it.
+ */
+async function ensureConfig() {
+  const configPath = path.join(process.cwd(), '.z-ai-config');
+  let baseConfig: any = {};
+
+  // 1. Try to read existing .z-ai-config (contains baseUrl for local dev)
+  try {
+    const raw = await readFile(configPath, 'utf-8');
+    baseConfig = JSON.parse(raw);
+  } catch {}
+
+  // 2. Override with environment variables (Vercel)
+  if (process.env.ZAI_BASE_URL) baseConfig.baseUrl = process.env.ZAI_BASE_URL;
+  if (process.env.ZAI_API_KEY) baseConfig.apiKey = process.env.ZAI_API_KEY;
+  if (process.env.ZAI_CHAT_ID) baseConfig.chatId = process.env.ZAI_CHAT_ID;
+  if (process.env.ZAI_TOKEN) baseConfig.token = process.env.ZAI_TOKEN;
+
+  // 3. Write merged config back so SDK's ZAI.create() can find it
+  await writeFile(configPath, JSON.stringify(baseConfig, null, 2));
+  return baseConfig;
 }
 
-// Debug endpoint — helps diagnose env var issues on Vercel
+async function getZAI() {
+  if (zaiInstance) return zaiInstance;
+  await ensureConfig();
+  zaiInstance = await ZAI.create();
+  return zaiInstance;
+}
+
+// Debug endpoint
 export async function GET() {
-  const config = getConfig();
+  let config: any = {};
+  try {
+    const raw = await readFile(path.join(process.cwd(), '.z-ai-config'), 'utf-8');
+    config = JSON.parse(raw);
+  } catch {}
+
   return new Response(JSON.stringify({
     status: 'ok',
-    config: {
-      baseUrl: config.baseUrl ? `${config.baseUrl.substring(0, 30)}...` : 'NOT SET',
+    fileConfig: {
+      baseUrl: config.baseUrl || 'NOT SET',
       apiKey: config.apiKey ? 'SET' : 'NOT SET',
       chatId: config.chatId ? `SET (${config.chatId.substring(0, 8)}...)` : 'NOT SET',
       token: config.token ? `SET (${config.token.substring(0, 15)}...)` : 'NOT SET',
     },
-    nodeEnv: process.env.NODE_ENV,
-    message: config.chatId && config.token
-      ? 'Environment variables look good. If /api/chat still fails, check the baseUrl.'
-      : 'WARNING: ZAI_CHAT_ID and/or ZAI_TOKEN are not set in environment variables!',
+    envVars: {
+      ZAI_BASE_URL: process.env.ZAI_BASE_URL ? 'SET' : 'NOT SET',
+      ZAI_API_KEY: process.env.ZAI_API_KEY ? 'SET' : 'NOT SET',
+      ZAI_CHAT_ID: process.env.ZAI_CHAT_ID ? 'SET' : 'NOT SET',
+      ZAI_TOKEN: process.env.ZAI_TOKEN ? 'SET' : 'NOT SET',
+    },
+    advice: !config.baseUrl
+      ? 'ERROR: No baseUrl found! Set ZAI_BASE_URL env var on Vercel to your public API URL.'
+      : 'Config looks good. If /api/chat still fails, the API server might be unreachable from Vercel.',
   }, null, 2), {
     headers: { 'Content-Type': 'application/json' },
   });
@@ -44,24 +84,30 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const config = getConfig();
+    const config = await ensureConfig();
 
-    if (!config.chatId || !config.token) {
+    if (!config.baseUrl) {
       return new Response(
-        JSON.stringify({ error: 'API not configured. Set ZAI_CHAT_ID and ZAI_TOKEN in Vercel env vars.' }),
+        JSON.stringify({
+          error: 'No API base URL configured. On Vercel, set the ZAI_BASE_URL environment variable to the public URL of your API server.',
+        }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    if (!config.baseUrl) {
+    if (!config.chatId || !config.token) {
       return new Response(
-        JSON.stringify({ error: 'ZAI_BASE_URL not set. Add it in Vercel env vars (e.g. https://your-api-host/v1).' }),
+        JSON.stringify({
+          error: 'Missing chatId or token. Set ZAI_CHAT_ID and ZAI_TOKEN environment variables.',
+        }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     const body = await request.json();
     const { messages, model, system, max_tokens, temperature, thinking, vision } = body;
+
+    const zai = await getZAI();
 
     // Build API messages
     const apiMessages: any[] = [];
@@ -88,63 +134,33 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Map model name
     const apiModel = model ? (MODEL_MAP[model] || model) : 'claude-sonnet-4-6';
 
-    // Build request body
-    const requestBody: any = {
+    const chatBody: any = {
       messages: apiMessages,
-      model: apiModel,
       stream: true,
+      model: apiModel,
     };
-    if (max_tokens) requestBody.max_tokens = max_tokens;
-    if (temperature !== undefined) requestBody.temperature = temperature;
-    requestBody.thinking = thinking || { type: 'disabled' };
+    if (max_tokens) chatBody.max_tokens = max_tokens;
+    if (temperature !== undefined) chatBody.temperature = temperature;
+    chatBody.thinking = thinking || { type: 'disabled' };
 
-    // Build headers
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
-      'X-Z-AI-From': 'Z',
-      'X-Chat-Id': config.chatId,
-      'X-Token': config.token,
-    };
-
-    // Choose endpoint
-    const url = vision
-      ? `${config.baseUrl}/chat/completions/vision`
-      : `${config.baseUrl}/chat/completions`;
-
-    console.log(`[Super Z API] POST ${url} model=${apiModel} messages=${apiMessages.length}`);
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[Super Z API] Error ${response.status}: ${errorText}`);
-      return new Response(
-        JSON.stringify({ error: `API ${response.status}: ${errorText.substring(0, 500)}` }),
-        { status: response.status, headers: { 'Content-Type': 'application/json' } }
-      );
+    let result;
+    if (vision) {
+      result = await zai.chat.completions.createVision(chatBody);
+    } else {
+      result = await zai.chat.completions.create(chatBody);
     }
 
-    // Stream the response — use TransformStream for Vercel compatibility
-    if (response.body) {
-      const reader = response.body.getReader();
-
+    // Stream the response back
+    if (result instanceof ReadableStream) {
+      const reader = result.getReader();
       const stream = new ReadableStream({
         async start(controller) {
           try {
             while (true) {
               const { done, value } = await reader.read();
-              if (done) {
-                controller.close();
-                break;
-              }
+              if (done) { controller.close(); break; }
               controller.enqueue(value);
             }
           } catch (err: any) {
@@ -153,7 +169,6 @@ export async function POST(request: NextRequest) {
           }
         },
       });
-
       return new Response(stream, {
         headers: {
           'Content-Type': 'text/event-stream',
@@ -163,9 +178,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Fallback
-    const json = await response.json();
-    return new Response(JSON.stringify(json), {
+    return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error: any) {
