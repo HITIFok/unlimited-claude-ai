@@ -15,11 +15,31 @@ const MODEL_MAP: Record<string, string> = {
 
 function getConfig() {
   return {
-    baseUrl: process.env.ZAI_BASE_URL || 'https://z-ai-web-dev.z.ai/v1',
-    apiKey: process.env.ZAI_API_KEY || 'Z.ai',
+    baseUrl: process.env.ZAI_BASE_URL || '',
+    apiKey: process.env.ZAI_API_KEY || '',
     chatId: process.env.ZAI_CHAT_ID || '',
     token: process.env.ZAI_TOKEN || '',
   };
+}
+
+// Debug endpoint — helps diagnose env var issues on Vercel
+export async function GET() {
+  const config = getConfig();
+  return new Response(JSON.stringify({
+    status: 'ok',
+    config: {
+      baseUrl: config.baseUrl ? `${config.baseUrl.substring(0, 30)}...` : 'NOT SET',
+      apiKey: config.apiKey ? 'SET' : 'NOT SET',
+      chatId: config.chatId ? `SET (${config.chatId.substring(0, 8)}...)` : 'NOT SET',
+      token: config.token ? `SET (${config.token.substring(0, 15)}...)` : 'NOT SET',
+    },
+    nodeEnv: process.env.NODE_ENV,
+    message: config.chatId && config.token
+      ? 'Environment variables look good. If /api/chat still fails, check the baseUrl.'
+      : 'WARNING: ZAI_CHAT_ID and/or ZAI_TOKEN are not set in environment variables!',
+  }, null, 2), {
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -27,9 +47,15 @@ export async function POST(request: NextRequest) {
     const config = getConfig();
 
     if (!config.chatId || !config.token) {
-      console.error('[Super Z API] Missing ZAI_CHAT_ID or ZAI_TOKEN env vars');
       return new Response(
-        JSON.stringify({ error: 'API not configured. Please set ZAI_CHAT_ID and ZAI_TOKEN environment variables.' }),
+        JSON.stringify({ error: 'API not configured. Set ZAI_CHAT_ID and ZAI_TOKEN in Vercel env vars.' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!config.baseUrl) {
+      return new Response(
+        JSON.stringify({ error: 'ZAI_BASE_URL not set. Add it in Vercel env vars (e.g. https://your-api-host/v1).' }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -73,7 +99,6 @@ export async function POST(request: NextRequest) {
     };
     if (max_tokens) requestBody.max_tokens = max_tokens;
     if (temperature !== undefined) requestBody.temperature = temperature;
-    // Default to disabled thinking unless explicitly enabled
     requestBody.thinking = thinking || { type: 'disabled' };
 
     // Build headers
@@ -90,7 +115,7 @@ export async function POST(request: NextRequest) {
       ? `${config.baseUrl}/chat/completions/vision`
       : `${config.baseUrl}/chat/completions`;
 
-    console.log(`[Super Z API] Calling ${url} with model=${apiModel}, messages=${apiMessages.length}`);
+    console.log(`[Super Z API] POST ${url} model=${apiModel} messages=${apiMessages.length}`);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -102,14 +127,34 @@ export async function POST(request: NextRequest) {
       const errorText = await response.text();
       console.error(`[Super Z API] Error ${response.status}: ${errorText}`);
       return new Response(
-        JSON.stringify({ error: `API returned ${response.status}: ${errorText.substring(0, 500)}` }),
+        JSON.stringify({ error: `API ${response.status}: ${errorText.substring(0, 500)}` }),
         { status: response.status, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    // Stream the response back to the client
+    // Stream the response — use TransformStream for Vercel compatibility
     if (response.body) {
-      return new Response(response.body, {
+      const reader = response.body.getReader();
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                controller.close();
+                break;
+              }
+              controller.enqueue(value);
+            }
+          } catch (err: any) {
+            console.error('[Super Z API] Stream error:', err.message);
+            try { controller.close(); } catch {}
+          }
+        },
+      });
+
+      return new Response(stream, {
         headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
@@ -118,13 +163,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Fallback: return JSON
+    // Fallback
     const json = await response.json();
     return new Response(JSON.stringify(json), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error: any) {
-    console.error('[Super Z API] Unhandled error:', error);
+    console.error('[Super Z API] Fatal error:', error);
     return new Response(
       JSON.stringify({ error: error.message || 'Internal server error' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
