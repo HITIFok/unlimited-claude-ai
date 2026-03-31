@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { readFile } from 'fs/promises';
 
-// Model name mapping for the Z.ai internal platform API
+// Model name mapping (Super Z names → API names)
 const MODEL_MAP: Record<string, string> = {
   'sz-opus-4-6': 'claude-opus-4-6',
   'sz-sonnet-4-6': 'claude-sonnet-4-6',
@@ -15,136 +15,178 @@ const MODEL_MAP: Record<string, string> = {
 };
 
 /**
- * Three runtime modes:
- * - "platform": Running on Z.ai platform (space.z.ai) → uses SDK + internal API (FREE)
- * - "proxy": Running on Vercel but forwards to a Z.ai proxy URL (FREE)
- * - "public": Running on Vercel with a paid Z.ai API key
+ * Detect runtime environment:
+ * - "platform": On Z.ai platform (space.z.ai) → FREE via SDK
+ * - "vercel": On Vercel → uses free Gemini API (no payment needed)
  */
-async function detectMode(): Promise<{ mode: 'platform' | 'proxy' | 'public'; proxyUrl?: string }> {
-  // 1. Platform mode: check for injected config at /etc/.z-ai-config
+async function detectMode(): Promise<'platform' | 'vercel'> {
   try {
     const configStr = await readFile('/etc/.z-ai-config', 'utf-8');
     const config = JSON.parse(configStr);
-    if (config.baseUrl && config.apiKey) return { mode: 'platform' };
+    if (config.baseUrl && config.apiKey) return 'platform';
   } catch {}
-
-  // 2. Proxy mode: ZAI_PROXY_URL env var is set → forward to Z.ai platform (FREE)
-  if (process.env.ZAI_PROXY_URL) {
-    return { mode: 'proxy', proxyUrl: process.env.ZAI_PROXY_URL.replace(/\/+$/, '') };
-  }
-
-  // 3. Public mode: paid Z.ai API key
-  if (process.env.ZAI_PUBLIC_API_KEY) return { mode: 'public' };
-
-  return { mode: 'public' };
+  return 'vercel';
 }
 
 /**
- * Call the internal Z.ai platform API using the SDK (FREE, platform-only).
+ * Call Z.ai internal API via SDK (FREE, platform only).
  */
-async function callPlatformAPI(body: any) {
+async function callPlatformAPI(chatBody: any) {
   const ZAI = (await import('z-ai-web-dev-sdk')).default;
   const zai = await ZAI.create();
 
-  if (body.vision) {
-    return zai.chat.completions.createVision(body);
+  if (chatBody.vision) {
+    return zai.chat.completions.createVision(chatBody);
   }
-  return zai.chat.completions.create(body);
+  return zai.chat.completions.create(chatBody);
 }
 
 /**
- * Forward request to a Z.ai platform proxy (FREE, works from Vercel).
- * The proxy is a Z.ai space deployment that has SDK access.
+ * Call Google Gemini API (FREE tier).
+ * Get API key: https://aistudio.google.com/apikey
  */
-async function callProxyAPI(proxyUrl: string, chatBody: any) {
-  const response = await fetch(`${proxyUrl}/api/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Proxy-Secret': process.env.ZAI_PROXY_SECRET || '',
+async function callGeminiAPI(chatBody: any, geminiKey: string) {
+  // Map Super Z model names to Gemini models
+  const geminiModelMap: Record<string, string> = {
+    'claude-opus-4-6': 'gemini-2.5-flash',
+    'claude-sonnet-4-6': 'gemini-2.5-flash',
+    'claude-opus-4-5': 'gemini-2.5-flash',
+    'claude-sonnet-4-5': 'gemini-2.5-flash',
+    'claude-sonnet-4': 'gemini-2.0-flash',
+    'claude-opus-4': 'gemini-2.5-flash',
+    'claude-3-7-sonnet': 'gemini-2.0-flash',
+    'claude-3-5-sonnet': 'gemini-2.0-flash',
+    'claude-3-5-haiku': 'gemini-2.0-flash-lite',
+  };
+
+  const model = geminiModelMap[chatBody.model] || 'gemini-2.5-flash';
+
+  // Convert messages to Gemini format
+  const contents = (chatBody.messages || [])
+    .filter((m: any) => m.role !== 'system')
+    .map((m: any) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+  // System instruction (extracted from messages)
+  const systemInstruction = chatBody.messages
+    ?.filter((m: any) => m.role === 'system')
+    .map((m: any) => m.content)
+    .join('\n') || undefined;
+
+  const requestBody: any = {
+    contents,
+    generationConfig: {
+      maxOutputTokens: chatBody.max_tokens || 8192,
+      temperature: chatBody.temperature ?? 0.7,
     },
-    body: JSON.stringify(chatBody),
+  };
+  if (systemInstruction) {
+    requestBody.systemInstruction = { parts: [{ text: systemInstruction }] };
+  }
+
+  if (chatBody.thinking?.type === 'enabled') {
+    requestBody.generationConfig.thinkingConfig = { thinkingBudget: 10000 };
+  }
+
+  const baseUrl = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
+  const url = `${baseUrl}/models/${model}:streamGenerateContent?alt=sse&key=${geminiKey}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(`Proxy error (${response.status}): ${errorBody}`);
+    throw new Error(`Gemini API error (${response.status}): ${errorBody}`);
   }
 
   return response;
 }
 
 /**
- * Call the Z.ai public paid API (OpenAI-compatible).
+ * Convert Gemini SSE format to OpenAI-compatible SSE format.
+ * Gemini: {"candidates":[{"content":{"parts":[{"text":"..."}]}}]}
+ * OpenAI: {"choices":[{"delta":{"content":"..."}}]}
  */
-async function callPublicAPI(body: any) {
-  const apiKey = process.env.ZAI_PUBLIC_API_KEY;
-  if (!apiKey) {
-    throw new Error('ZAI_PUBLIC_API_KEY is not set. Get your API key from https://z.ai → API Keys page.');
-  }
+function geminiToOpenAIStream(geminiStream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = geminiStream.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
 
-  const baseUrl = process.env.ZAI_PUBLIC_BASE_URL || 'https://api.z.ai/api/paas/v4';
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'Accept-Language': 'en-US,en',
+  return new ReadableStream({
+    async start(controller) {
+      let buffer = '';
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const jsonStr = line.slice(6).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const gemini = JSON.parse(jsonStr);
+
+              // Extract text from Gemini response
+              const text = gemini.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+              if (gemini.candidates?.[0]?.finishReason === 'STOP') {
+                // Send finish event
+                controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                continue;
+              }
+
+              if (text) {
+                // Convert to OpenAI format
+                const openaiChunk = {
+                  choices: [{ delta: { content: text }, index: 0 }],
+                };
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
+              }
+            } catch (e) {
+              // Skip unparseable chunks
+            }
+          }
+        }
+        // Ensure DONE is sent
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      } catch (err: any) {
+        console.error('[Gemini stream] Error:', err.message);
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      } finally {
+        controller.close();
+      }
     },
-    body: JSON.stringify(body),
   });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Z.ai API error (${response.status}): ${errorBody}`);
-  }
-
-  return response;
-}
-
-/**
- * Proxy guard: when running on Z.ai platform, reject unauthenticated proxy calls.
- * This prevents anyone from using your Z.ai space as a free API without the secret.
- */
-function isProxyAuthenticated(request: NextRequest): boolean {
-  const secret = process.env.ZAI_PROXY_SECRET;
-  if (!secret) return true; // No secret = open (for convenience during setup)
-  const provided = request.headers.get('X-Proxy-Secret');
-  return provided === secret;
 }
 
 // Diagnostic endpoint
 export async function GET() {
-  const { mode, proxyUrl } = await detectMode();
+  const mode = await detectMode();
   const info: any = { status: 'ok', mode, advice: '' };
 
   if (mode === 'platform') {
-    try {
-      const configStr = await readFile('/etc/.z-ai-config', 'utf-8');
-      const config = JSON.parse(configStr);
-      info.platformConfig = {
-        baseUrl: config.baseUrl ? 'SET' : 'NOT SET',
-        apiKey: config.apiKey ? 'SET' : 'NOT SET',
-        chatId: config.chatId ? `SET (${config.chatId.substring(0, 8)}...)` : 'NOT SET',
-        token: config.token ? `SET (${config.token.substring(0, 15)}...)` : 'NOT SET',
-      };
-      info.proxySecret = process.env.ZAI_PROXY_SECRET ? 'SET' : 'NOT SET (recommended)';
-      info.advice = '✅ Running on Z.ai platform. Using FREE internal API via SDK.';
-      info.role = 'This deployment acts as both the app AND the proxy for Vercel.';
-    } catch (e: any) {
-      info.advice = `Platform config error: ${e.message}`;
-    }
-  } else if (mode === 'proxy') {
-    info.proxyUrl,
-    info.proxySecret = process.env.ZAI_PROXY_SECRET ? 'SET' : 'NOT SET';
-    info.advice = `✅ Proxy mode (FREE). Chat requests are forwarded to: ${proxyUrl}`;
-    info.howItWorks = 'Vercel (frontend) → Z.ai space (proxy with FREE API) → AI response';
+    info.advice = '✅ Running on Z.ai platform — FREE mode via SDK.';
   } else {
     info.envVars = {
-      ZAI_PUBLIC_API_KEY: process.env.ZAI_PUBLIC_API_KEY ? `SET (${process.env.ZAI_PUBLIC_API_KEY.substring(0, 10)}...)` : 'NOT SET',
-      ZAI_PUBLIC_BASE_URL: process.env.ZAI_PUBLIC_BASE_URL || 'DEFAULT (https://api.z.ai/api/paas/v4)',
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY ? `SET (${process.env.GEMINI_API_KEY.substring(0, 8)}...)` : 'NOT SET',
+      GEMINI_BASE_URL: process.env.GEMINI_BASE_URL || 'DEFAULT',
     };
-    info.advice = '⚠️ Public mode (paid). Set ZAI_PROXY_URL to use FREE proxy mode instead.';
+    if (process.env.GEMINI_API_KEY) {
+      info.advice = '✅ Using FREE Google Gemini API. Get key at https://aistudio.google.com/apikey';
+    } else {
+      info.advice = '❌ GEMINI_API_KEY not set. Get a FREE key at https://aistudio.google.com/apikey and add it in Vercel env vars.';
+    }
   }
 
   return new Response(JSON.stringify(info, null, 2), {
@@ -152,60 +194,42 @@ export async function GET() {
   });
 }
 
-// Live test endpoint
+// Test endpoint
 export async function PUT(request: NextRequest) {
   try {
-    const { mode, proxyUrl } = await detectMode();
+    const mode = await detectMode();
     const steps: string[] = [];
     steps.push(`Mode: ${mode}`);
 
     if (mode === 'platform') {
-      steps.push('Testing SDK + internal API...');
+      steps.push('Testing SDK...');
       const ZAI = (await import('z-ai-web-dev-sdk')).default;
       const zai = await ZAI.create();
       const result = await zai.chat.completions.create({
         messages: [{ role: 'user', content: 'Say hi in 3 words' }],
         max_tokens: 10,
       });
-      steps.push(`Result: ${JSON.stringify(result).substring(0, 300)}`);
-      steps.push('✅ SUCCESS — Free API working on Z.ai platform!');
-      steps.push('Set ZAI_PROXY_URL on Vercel to this space URL for free access.');
-    } else if (mode === 'proxy') {
-      steps.push(`Proxy URL: ${proxyUrl}`);
-      steps.push('Testing proxy connection...');
-      const response = await fetch(`${proxyUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Proxy-Secret': process.env.ZAI_PROXY_SECRET || '',
-        },
-        body: JSON.stringify({
-          messages: [{ role: 'user', content: 'Say hi in 3 words' }],
-          model: 'claude-sonnet-4-6',
-          max_tokens: 10,
-          stream: false,
-        }),
-      });
-      const text = await response.text();
-      steps.push(`Proxy status: ${response.status}`);
-      steps.push(`Proxy response: ${text.substring(0, 400)}`);
-      steps.push(response.ok ? '✅ SUCCESS — Proxy is working for free!' : '❌ FAIL — Check proxy URL and secret.');
+      steps.push(`✅ ${JSON.stringify(result).substring(0, 200)}`);
     } else {
-      const apiKey = process.env.ZAI_PUBLIC_API_KEY;
-      steps.push(`API Key: ${apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'}`);
-      if (!apiKey) {
-        steps.push('❌ No API key. Set ZAI_PROXY_URL for free mode, or ZAI_PUBLIC_API_KEY for paid mode.');
+      const key = process.env.GEMINI_API_KEY;
+      if (!key) {
+        steps.push('❌ No GEMINI_API_KEY set.');
+        steps.push('Go to https://aistudio.google.com/apikey to get a FREE API key.');
       } else {
-        steps.push('Testing paid API...');
-        const baseUrl = process.env.ZAI_PUBLIC_BASE_URL || 'https://api.z.ai/api/paas/v4';
-        const resp = await fetch(`${baseUrl}/chat/completions`, {
+        steps.push(`Gemini key: ${key.substring(0, 8)}...`);
+        steps.push('Testing Gemini API...');
+        const baseUrl = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
+        const resp = await fetch(`${baseUrl}/models/gemini-2.0-flash:generateContent?key=${key}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'Accept-Language': 'en-US,en' },
-          body: JSON.stringify({ model: 'glm-4.5', messages: [{ role: 'user', content: 'hi' }], max_tokens: 5, stream: false }),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'Say hi in 3 words' }] }],
+            generationConfig: { maxOutputTokens: 10 },
+          }),
         });
         const body = await resp.text();
-        steps.push(`Status: ${resp.status} — ${body.substring(0, 200)}`);
-        steps.push(resp.ok ? '✅ SUCCESS — Paid API working.' : '❌ FAIL — Check API key and balance.');
+        steps.push(`Status: ${resp.status} — ${body.substring(0, 300)}`);
+        steps.push(resp.ok ? '✅ Gemini is working!' : '❌ Check your API key.');
       }
     }
 
@@ -222,16 +246,7 @@ export async function PUT(request: NextRequest) {
 // Main chat endpoint
 export async function POST(request: NextRequest) {
   try {
-    const { mode, proxyUrl } = await detectMode();
-
-    // Security: when acting as a proxy on Z.ai platform, verify the caller
-    if (mode === 'platform' && !isProxyAuthenticated(request)) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid proxy secret. Set X-Proxy-Secret header.' }),
-        { status: 403, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
+    const mode = await detectMode();
     const body = await request.json();
     const { messages, model, system, max_tokens, temperature, thinking, vision } = body;
 
@@ -269,40 +284,55 @@ export async function POST(request: NextRequest) {
     chatBody.thinking = thinking || { type: 'disabled' };
     if (vision) chatBody.vision = true;
 
-    let response: Response;
-
     if (mode === 'platform') {
-      // Direct SDK call (FREE)
+      // ─── Z.ai Platform: FREE via SDK ───
       const result = await callPlatformAPI(chatBody);
 
       if (result instanceof ReadableStream) {
-        return streamResponse(result);
+        return new Response(new ReadableStream({
+          async start(controller) {
+            const reader = result.getReader();
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) { controller.close(); break; }
+                controller.enqueue(value);
+              }
+            } catch (err: any) {
+              console.error('[Super Z] Stream error:', err.message);
+              try { controller.close(); } catch {}
+            }
+          },
+        }), {
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
+        });
       }
       return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
 
-    } else if (mode === 'proxy') {
-      // Forward to Z.ai space proxy (FREE)
-      response = await callProxyAPI(proxyUrl!, chatBody);
-
-      // Check if proxy returned JSON error
-      const ct = response.headers.get('content-type') || '';
-      if (ct.includes('application/json') && !response.body) {
-        const json = await response.json();
-        return new Response(JSON.stringify(json), { status: response.status, headers: { 'Content-Type': 'application/json' } });
-      }
-      return streamExternalResponse(response);
-
     } else {
-      // Paid public API
-      const publicModel = chatBody.model; // Keep original name for public API
-      chatBody.model = model ? (MODEL_MAP[model] || model) : 'glm-4.5';
-      delete chatBody.vision;
-      if (thinking && thinking.type === 'enabled') {
-        chatBody.thinking = { type: 'enabled' };
+      // ─── Vercel: FREE via Google Gemini API ───
+      const geminiKey = process.env.GEMINI_API_KEY;
+      if (!geminiKey) {
+        return new Response(
+          JSON.stringify({
+            error: 'GEMINI_API_KEY is not set. Get a FREE API key at https://aistudio.google.com/apikey and add it as a Vercel environment variable.',
+          }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
       }
 
-      response = await callPublicAPI(chatBody);
-      return streamExternalResponse(response);
+      const geminiResponse = await callGeminiAPI(chatBody, geminiKey);
+
+      if (geminiResponse.body) {
+        const convertedStream = geminiToOpenAIStream(geminiResponse.body);
+        return new Response(convertedStream, {
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
+        });
+      }
+
+      return new Response('{"error":"No response body from Gemini"}', {
+        status: 500, headers: { 'Content-Type': 'application/json' },
+      });
     }
   } catch (error: any) {
     console.error('[Super Z API] Fatal error:', error);
@@ -311,49 +341,4 @@ export async function POST(request: NextRequest) {
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
-}
-
-/** Stream a ReadableStream from the SDK */
-function streamResponse(result: ReadableStream) {
-  const reader = result.getReader();
-  return new Response(new ReadableStream({
-    async start(controller) {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) { controller.close(); break; }
-          controller.enqueue(value);
-        }
-      } catch (err: any) {
-        console.error('[Super Z] Stream error:', err.message);
-        try { controller.close(); } catch {}
-      }
-    },
-  }), {
-    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
-  });
-}
-
-/** Stream a fetch Response from external APIs */
-function streamExternalResponse(response: Response) {
-  if (!response.body) {
-    return new Response('{"error":"No response body"}', { status: 500, headers: { 'Content-Type': 'application/json' } });
-  }
-  const reader = response.body.getReader();
-  return new Response(new ReadableStream({
-    async start(controller) {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) { controller.close(); break; }
-          controller.enqueue(value);
-        }
-      } catch (err: any) {
-        console.error('[Super Z] External stream error:', err.message);
-        try { controller.close(); } catch {}
-      }
-    },
-  }), {
-    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
-  });
 }
