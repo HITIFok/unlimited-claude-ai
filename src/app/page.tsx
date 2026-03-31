@@ -50,18 +50,29 @@ async function pdfToImages(att: { base64: string; name: string }): Promise<{ tex
 
     // 3) Scanned PDF → render each page as image for vision
     const images: string[] = [];
-    const MAX_PAGES = 10;
+    const MAX_PAGES = 5;
+    const MAX_DIM = 1024; // max width/height to keep payload small
+    let totalBytes = 0;
+    const MAX_TOTAL_BYTES = 3 * 1024 * 1024; // 3MB budget (Vercel limit ~4.5MB)
+
     for (let i = 1; i <= Math.min(pdf.numPages, MAX_PAGES); i++) {
+      if (totalBytes >= MAX_TOTAL_BYTES) break;
       const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 2 }); // 2x for better OCR readability
+      const origViewport = page.getViewport({ scale: 1 });
+      // Scale down to fit MAX_DIM
+      const scale = Math.min(1, MAX_DIM / Math.max(origViewport.width, origViewport.height));
+      const viewport = page.getViewport({ scale });
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d');
       if (!ctx) continue;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport }).promise;
-      // Convert canvas to base64 JPEG
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.55);
+      const imgBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+      totalBytes += imgBytes;
       images.push(dataUrl);
       canvas.remove();
     }

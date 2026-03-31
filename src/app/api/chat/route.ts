@@ -1,6 +1,10 @@
 import { NextRequest } from 'next/server';
 import ZAI from 'z-ai-web-dev-sdk';
 
+// Allow larger request bodies for vision/PDF uploads (up to 6MB)
+export const maxDuration = 120;
+export const runtime = 'nodejs';
+
 // ──────────────────────────────────────────────
 // Z.ai Proxy URL — used on Vercel (no internal API access)
 // On Z.ai platform: SDK is used directly (free, fast)
@@ -31,6 +35,8 @@ async function proxyToZAI(body: Record<string, any>) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    // Vercel default timeout is 10s for Hobby, 60s for Pro — give enough time for vision
+    signal: AbortSignal.timeout(120_000),
   });
 
   if (!res.ok) {
