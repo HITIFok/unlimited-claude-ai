@@ -2,17 +2,18 @@ import { NextRequest } from 'next/server';
 import { readFile } from 'fs/promises';
 import path from 'path';
 
-// Model name mapping for the Z.ai public API
+// Model name mapping for the Z.ai public API (https://api.z.ai/api/paas/v4)
+// Available models: glm-5, glm-5-turbo, glm-4.7, glm-4.6, glm-4.5, glm-4-32b-0414-128k
 const PUBLIC_MODEL_MAP: Record<string, string> = {
-  'sz-opus-4-6': 'glm-4.6',
-  'sz-sonnet-4-6': 'glm-4.6',
-  'sz-opus-4-5': 'glm-4.5',
+  'sz-opus-4-6': 'glm-5',
+  'sz-sonnet-4-6': 'glm-4.7',
+  'sz-opus-4-5': 'glm-4.6',
   'sz-sonnet-4-5': 'glm-4.5',
-  'sz-sonnet-4': 'glm-4',
-  'sz-opus-4': 'glm-4',
-  'sz-3-7-sonnet': 'glm-4',
-  'sz-3-5-sonnet': 'glm-4',
-  'sz-3-5-haiku': 'glm-4-flash',
+  'sz-sonnet-4': 'glm-4.5',
+  'sz-opus-4': 'glm-4.6',
+  'sz-3-7-sonnet': 'glm-4.5',
+  'sz-3-5-sonnet': 'glm-4.5',
+  'sz-3-5-haiku': 'glm-4.5',
 };
 
 // Model name mapping for the Z.ai internal platform API
@@ -161,7 +162,7 @@ export async function PUT(request: NextRequest) {
           'Accept-Language': 'en-US,en',
         },
         body: JSON.stringify({
-          model: 'glm-4-flash',
+          model: 'glm-4.5',
           messages: [{ role: 'user', content: 'Say hi' }],
           max_tokens: 5,
           stream: false,
@@ -287,7 +288,7 @@ export async function POST(request: NextRequest) {
 
     } else {
       // Use the Z.ai public API (OpenAI-compatible) — for Vercel etc.
-      const apiModel = model ? (PUBLIC_MODEL_MAP[model] || model) : 'glm-4.6';
+      const apiModel = model ? (PUBLIC_MODEL_MAP[model] || model) : 'glm-4.5';
       const chatBody: any = {
         messages: apiMessages,
         stream: true,
