@@ -837,14 +837,14 @@ export default function SuperZInterface() {
           // Collect all image sources (direct images + PDF page images)
           const allImageSources: { type: string; source: any }[] = [];
 
-          // Direct image attachments
+          // Direct image attachments (OpenAI image_url format for Z.ai SDK)
           imageAttachments.forEach(att => {
-            allImageSources.push({ type: 'image', source: { type: 'base64', media_type: att.type, data: att.base64.split(',')[1] } });
+            allImageSources.push({ type: 'image_url', image_url: { url: att.base64 } });
           });
 
-          // PDF rendered pages
+          // PDF rendered pages (OpenAI image_url format)
           pdfPageImages.forEach(dataUrl => {
-            allImageSources.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: dataUrl.split(',')[1] } });
+            allImageSources.push({ type: 'image_url', image_url: { url: dataUrl } });
           });
 
           const hasImagesForMsg = allImageSources.length > 0;
@@ -874,7 +874,7 @@ export default function SuperZInterface() {
       const requestBody: any = {
         messages: apiMessages,
         model: currentModel,
-        system: SUPER_Z_SYSTEM_PROMPT,
+        system: (typeof SUPER_Z_SYSTEM_PROMPT === 'string' ? SUPER_Z_SYSTEM_PROMPT : SUPER_Z_SYSTEM_PROMPT.join('\n')),
         max_tokens: 16384,
         temperature: 1,
         vision: hasAnyImages,
@@ -905,7 +905,9 @@ export default function SuperZInterface() {
       }
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server error ${response.status}`);
+        const errMsg = errData.error || errData.message || `Server error ${response.status}`;
+        console.error('[Super Z] API error:', response.status, errMsg, errData);
+        throw new Error(errMsg);
       }
       if (typingEl) typingEl.style.display = 'none';
       const messageContent = addMessageToDOM('', 'assistant');
