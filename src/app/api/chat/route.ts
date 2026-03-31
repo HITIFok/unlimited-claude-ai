@@ -1,8 +1,22 @@
 import { NextRequest } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
+import { readFile } from 'fs/promises';
+import path from 'path';
 
-// Translate internal Super Z model names to API model names
-const MODEL_MAP: Record<string, string> = {
+// Model name mapping for the Z.ai public API
+const PUBLIC_MODEL_MAP: Record<string, string> = {
+  'sz-opus-4-6': 'glm-4.6',
+  'sz-sonnet-4-6': 'glm-4.6',
+  'sz-opus-4-5': 'glm-4.5',
+  'sz-sonnet-4-5': 'glm-4.5',
+  'sz-sonnet-4': 'glm-4',
+  'sz-opus-4': 'glm-4',
+  'sz-3-7-sonnet': 'glm-4',
+  'sz-3-5-sonnet': 'glm-4',
+  'sz-3-5-haiku': 'glm-4-flash',
+};
+
+// Model name mapping for the Z.ai internal platform API
+const INTERNAL_MODEL_MAP: Record<string, string> = {
   'sz-opus-4-6': 'claude-opus-4-6',
   'sz-sonnet-4-6': 'claude-sonnet-4-6',
   'sz-opus-4-5': 'claude-opus-4-5',
@@ -14,97 +28,120 @@ const MODEL_MAP: Record<string, string> = {
   'sz-3-5-haiku': 'claude-3-5-haiku',
 };
 
-let zaiInstance: any = null;
-
 /**
- * Create ZAI instance directly from env vars (no filesystem dependency).
- * On the Z.ai platform, .z-ai-config provides baseUrl/token automatically.
- * On Vercel, all values must come from environment variables.
+ * Detect which mode we're running in:
+ * - "platform": Inside the Z.ai platform (space.z.ai) — uses internal API + SDK
+ * - "public": External deployment (Vercel, etc.) — uses public Z.ai API with API key
  */
-function buildConfig() {
-  return {
-    baseUrl: process.env.ZAI_BASE_URL || '',
-    apiKey: process.env.ZAI_API_KEY || '',
-    chatId: process.env.ZAI_CHAT_ID || '',
-    token: process.env.ZAI_TOKEN || '',
-    userId: process.env.ZAI_USER_ID || '',
-  };
+async function detectMode(): Promise<'platform' | 'public'> {
+  // Check if platform config exists at /etc/.z-ai-config (injected by Z.ai platform)
+  try {
+    const configStr = await readFile('/etc/.z-ai-config', 'utf-8');
+    const config = JSON.parse(configStr);
+    if (config.baseUrl && config.apiKey) return 'platform';
+  } catch {}
+
+  // Check if ZAI_PUBLIC_API_KEY env var is set (for Vercel)
+  if (process.env.ZAI_PUBLIC_API_KEY) return 'public';
+
+  // Default to public mode
+  return 'public';
 }
 
-async function getZAI() {
-  if (zaiInstance) return zaiInstance;
-  const config = buildConfig();
-  zaiInstance = new ZAI(config);
-  return zaiInstance;
+/**
+ * Call the Z.ai public API (OpenAI-compatible) from external deployments like Vercel.
+ * API docs: https://docs.z.ai/guides/overview/quick-start
+ * Base URL: https://api.z.ai/api/paas/v4
+ */
+async function callPublicAPI(body: { messages: any[]; model: string; stream: boolean; max_tokens?: number; temperature?: number; thinking?: any }) {
+  const apiKey = process.env.ZAI_PUBLIC_API_KEY;
+  if (!apiKey) {
+    throw new Error('ZAI_PUBLIC_API_KEY is not set. Get your API key from https://z.ai → API Keys management page.');
+  }
+
+  const baseUrl = process.env.ZAI_PUBLIC_BASE_URL || 'https://api.z.ai/api/paas/v4';
+  const url = `${baseUrl}/chat/completions`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'Accept-Language': 'en-US,en',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Z.ai API error (${response.status}): ${errorBody}`);
+  }
+
+  return response;
+}
+
+/**
+ * Call the internal Z.ai platform API using the SDK (only works inside Z.ai network).
+ */
+async function callPlatformAPI(body: { messages: any[]; model: string; stream: boolean; max_tokens?: number; temperature?: number; thinking?: any; vision?: boolean }) {
+  // Dynamic import to avoid issues on platforms where the config doesn't exist
+  const ZAI = (await import('z-ai-web-dev-sdk')).default;
+  const zai = await ZAI.create();
+
+  if (body.vision) {
+    return zai.chat.completions.createVision(body);
+  }
+  return zai.chat.completions.create(body);
 }
 
 // Diagnostic endpoint
 export async function GET() {
-  const config = buildConfig();
+  const mode = await detectMode();
 
-  return new Response(JSON.stringify({
+  const info: any = {
     status: 'ok',
-    config: {
-      baseUrl: config.baseUrl || 'NOT SET (required)',
-      apiKey: config.apiKey ? `SET (${config.apiKey.substring(0, 6)}...)` : 'NOT SET (required)',
-      chatId: config.chatId ? `SET (${config.chatId.substring(0, 8)}...)` : 'NOT SET',
-      token: config.token ? `SET (${config.token.substring(0, 15)}...)` : 'NOT SET',
-      userId: config.userId ? `SET (${config.userId.substring(0, 8)}...)` : 'NOT SET',
-    },
-    envVars: {
-      ZAI_BASE_URL: process.env.ZAI_BASE_URL ? 'SET' : 'NOT SET',
-      ZAI_API_KEY: process.env.ZAI_API_KEY ? 'SET' : 'NOT SET',
-      ZAI_CHAT_ID: process.env.ZAI_CHAT_ID ? 'SET' : 'NOT SET',
-      ZAI_TOKEN: process.env.ZAI_TOKEN ? 'SET' : 'NOT SET',
-      ZAI_USER_ID: process.env.ZAI_USER_ID ? 'SET' : 'NOT SET',
-    },
-    advice: !config.baseUrl
-      ? 'ERROR: ZAI_BASE_URL is not set. On Vercel, add it as an environment variable (e.g. https://z.ai/api/v1).'
-      : !config.apiKey
-      ? 'ERROR: ZAI_API_KEY is not set. On Vercel, add it as an environment variable.'
-      : 'Config looks OK. If chat still fails, check that the API server is reachable and credentials are valid.',
-  }, null, 2), {
+    mode,
+    advice: '',
+  };
+
+  if (mode === 'platform') {
+    try {
+      const configStr = await readFile('/etc/.z-ai-config', 'utf-8');
+      const config = JSON.parse(configStr);
+      info.platformConfig = {
+        baseUrl: config.baseUrl ? 'SET' : 'NOT SET',
+        apiKey: config.apiKey ? 'SET' : 'NOT SET',
+        chatId: config.chatId ? `SET (${config.chatId.substring(0, 8)}...)` : 'NOT SET',
+        token: config.token ? `SET (${config.token.substring(0, 15)}...)` : 'NOT SET',
+      };
+      info.advice = 'Running on Z.ai platform. Using internal API via SDK. Everything should work.';
+    } catch (e: any) {
+      info.advice = `Platform config error: ${e.message}`;
+    }
+  } else {
+    info.envVars = {
+      ZAI_PUBLIC_API_KEY: process.env.ZAI_PUBLIC_API_KEY ? 'SET' : 'NOT SET (required)',
+      ZAI_PUBLIC_BASE_URL: process.env.ZAI_PUBLIC_BASE_URL || 'DEFAULT (https://api.z.ai/api/paas/v4)',
+    };
+    if (!process.env.ZAI_PUBLIC_API_KEY) {
+      info.advice = 'ERROR: ZAI_PUBLIC_API_KEY is not set. Go to https://z.ai → API Keys → Create API Key, then add it as a Vercel environment variable.';
+    } else {
+      info.advice = 'Config looks OK. Using Z.ai public API. If chat still fails, verify your API key is valid at https://z.ai.';
+    }
+  }
+
+  return new Response(JSON.stringify(info, null, 2), {
     headers: { 'Content-Type': 'application/json' },
   });
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const config = buildConfig();
-
-    if (!config.baseUrl) {
-      return new Response(
-        JSON.stringify({
-          error: 'ZAI_BASE_URL is not configured. On Vercel, set the ZAI_BASE_URL environment variable to the public API URL (e.g. https://z.ai/api/v1).',
-        }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    if (!config.apiKey) {
-      return new Response(
-        JSON.stringify({
-          error: 'ZAI_API_KEY is not configured. On Vercel, set the ZAI_API_KEY environment variable.',
-        }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    if (!config.chatId) {
-      return new Response(
-        JSON.stringify({
-          error: 'ZAI_CHAT_ID is not configured. On Vercel, set the ZAI_CHAT_ID environment variable.',
-        }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
+    const mode = await detectMode();
     const body = await request.json();
     const { messages, model, system, max_tokens, temperature, thinking, vision } = body;
 
-    const zai = await getZAI();
-
-    // Build API messages
+    // Build messages array
     const apiMessages: any[] = [];
     if (system) {
       apiMessages.push({ role: 'system', content: system });
@@ -129,53 +166,98 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const apiModel = model ? (MODEL_MAP[model] || model) : 'claude-sonnet-4-6';
+    if (mode === 'platform') {
+      // Use the internal Z.ai platform API via SDK
+      const apiModel = model ? (INTERNAL_MODEL_MAP[model] || model) : 'claude-sonnet-4-6';
+      const chatBody: any = {
+        messages: apiMessages,
+        stream: true,
+        model: apiModel,
+      };
+      if (max_tokens) chatBody.max_tokens = max_tokens;
+      if (temperature !== undefined) chatBody.temperature = temperature;
+      chatBody.thinking = thinking || { type: 'disabled' };
 
-    const chatBody: any = {
-      messages: apiMessages,
-      stream: true,
-      model: apiModel,
-    };
-    if (max_tokens) chatBody.max_tokens = max_tokens;
-    if (temperature !== undefined) chatBody.temperature = temperature;
-    chatBody.thinking = thinking || { type: 'disabled' };
+      const result = await callPlatformAPI({ ...chatBody, vision });
 
-    let result;
-    if (vision) {
-      result = await zai.chat.completions.createVision(chatBody);
-    } else {
-      result = await zai.chat.completions.create(chatBody);
-    }
-
-    // Stream the response back
-    if (result instanceof ReadableStream) {
-      const reader = result.getReader();
-      const stream = new ReadableStream({
-        async start(controller) {
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) { controller.close(); break; }
-              controller.enqueue(value);
+      if (result instanceof ReadableStream) {
+        const reader = result.getReader();
+        const stream = new ReadableStream({
+          async start(controller) {
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) { controller.close(); break; }
+                controller.enqueue(value);
+              }
+            } catch (err: any) {
+              console.error('[Super Z API] Platform stream error:', err.message);
+              try { controller.close(); } catch {}
             }
-          } catch (err: any) {
-            console.error('[Super Z API] Stream error:', err.message);
-            try { controller.close(); } catch {}
-          }
-        },
+          },
+        });
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        headers: { 'Content-Type': 'application/json' },
       });
-      return new Response(stream, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
+
+    } else {
+      // Use the Z.ai public API (OpenAI-compatible) — for Vercel etc.
+      const apiModel = model ? (PUBLIC_MODEL_MAP[model] || model) : 'glm-4.6';
+      const chatBody: any = {
+        messages: apiMessages,
+        stream: true,
+        model: apiModel,
+      };
+      if (max_tokens) chatBody.max_tokens = max_tokens;
+      if (temperature !== undefined) chatBody.temperature = temperature;
+
+      // The public API uses "thinking" mode differently
+      if (thinking && thinking.type === 'enabled') {
+        chatBody.thinking = { type: 'enabled' };
+      }
+
+      const response = await callPublicAPI(chatBody);
+
+      // Stream the response back to the client
+      if (response.body) {
+        const stream = new ReadableStream({
+          async start(controller) {
+            const reader = response.body!.getReader();
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) { controller.close(); break; }
+                controller.enqueue(value);
+              }
+            } catch (err: any) {
+              console.error('[Super Z API] Public stream error:', err.message);
+              try { controller.close(); } catch {}
+            }
+          },
+        });
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        });
+      }
+
+      const json = await response.json();
+      return new Response(JSON.stringify(json), {
+        headers: { 'Content-Type': 'application/json' },
       });
     }
-
-    return new Response(JSON.stringify(result), {
-      headers: { 'Content-Type': 'application/json' },
-    });
   } catch (error: any) {
     console.error('[Super Z API] Fatal error:', error);
     return new Response(
