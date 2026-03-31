@@ -1,7 +1,4 @@
 import { NextRequest } from 'next/server';
-import { writeFile, readFile } from 'fs/promises';
-import path from 'path';
-import os from 'os';
 import ZAI from 'z-ai-web-dev-sdk';
 
 // Translate internal Super Z model names to API model names
@@ -20,63 +17,52 @@ const MODEL_MAP: Record<string, string> = {
 let zaiInstance: any = null;
 
 /**
- * Ensure .z-ai-config exists in a writable location with env var overrides.
- * The SDK reads from process.cwd()/.z-ai-config first.
- * We write a merged config there so the SDK can find it.
+ * Create ZAI instance directly from env vars (no filesystem dependency).
+ * On the Z.ai platform, .z-ai-config provides baseUrl/token automatically.
+ * On Vercel, all values must come from environment variables.
  */
-async function ensureConfig() {
-  const configPath = path.join(process.cwd(), '.z-ai-config');
-  let baseConfig: any = {};
-
-  // 1. Try to read existing .z-ai-config (contains baseUrl for local dev)
-  try {
-    const raw = await readFile(configPath, 'utf-8');
-    baseConfig = JSON.parse(raw);
-  } catch {}
-
-  // 2. Override with environment variables (Vercel)
-  if (process.env.ZAI_BASE_URL) baseConfig.baseUrl = process.env.ZAI_BASE_URL;
-  if (process.env.ZAI_API_KEY) baseConfig.apiKey = process.env.ZAI_API_KEY;
-  if (process.env.ZAI_CHAT_ID) baseConfig.chatId = process.env.ZAI_CHAT_ID;
-  if (process.env.ZAI_TOKEN) baseConfig.token = process.env.ZAI_TOKEN;
-
-  // 3. Write merged config back so SDK's ZAI.create() can find it
-  await writeFile(configPath, JSON.stringify(baseConfig, null, 2));
-  return baseConfig;
+function buildConfig() {
+  return {
+    baseUrl: process.env.ZAI_BASE_URL || '',
+    apiKey: process.env.ZAI_API_KEY || '',
+    chatId: process.env.ZAI_CHAT_ID || '',
+    token: process.env.ZAI_TOKEN || '',
+    userId: process.env.ZAI_USER_ID || '',
+  };
 }
 
 async function getZAI() {
   if (zaiInstance) return zaiInstance;
-  await ensureConfig();
-  zaiInstance = await ZAI.create();
+  const config = buildConfig();
+  zaiInstance = new ZAI(config);
   return zaiInstance;
 }
 
-// Debug endpoint
+// Diagnostic endpoint
 export async function GET() {
-  let config: any = {};
-  try {
-    const raw = await readFile(path.join(process.cwd(), '.z-ai-config'), 'utf-8');
-    config = JSON.parse(raw);
-  } catch {}
+  const config = buildConfig();
 
   return new Response(JSON.stringify({
     status: 'ok',
-    fileConfig: {
-      baseUrl: config.baseUrl || 'NOT SET',
-      apiKey: config.apiKey ? 'SET' : 'NOT SET',
+    config: {
+      baseUrl: config.baseUrl || 'NOT SET (required)',
+      apiKey: config.apiKey ? `SET (${config.apiKey.substring(0, 6)}...)` : 'NOT SET (required)',
       chatId: config.chatId ? `SET (${config.chatId.substring(0, 8)}...)` : 'NOT SET',
       token: config.token ? `SET (${config.token.substring(0, 15)}...)` : 'NOT SET',
+      userId: config.userId ? `SET (${config.userId.substring(0, 8)}...)` : 'NOT SET',
     },
     envVars: {
       ZAI_BASE_URL: process.env.ZAI_BASE_URL ? 'SET' : 'NOT SET',
       ZAI_API_KEY: process.env.ZAI_API_KEY ? 'SET' : 'NOT SET',
       ZAI_CHAT_ID: process.env.ZAI_CHAT_ID ? 'SET' : 'NOT SET',
       ZAI_TOKEN: process.env.ZAI_TOKEN ? 'SET' : 'NOT SET',
+      ZAI_USER_ID: process.env.ZAI_USER_ID ? 'SET' : 'NOT SET',
     },
     advice: !config.baseUrl
-      ? 'ERROR: No baseUrl found! Set ZAI_BASE_URL env var on Vercel to your public API URL.'
-      : 'Config looks good. If /api/chat still fails, the API server might be unreachable from Vercel.',
+      ? 'ERROR: ZAI_BASE_URL is not set. On Vercel, add it as an environment variable (e.g. https://z.ai/api/v1).'
+      : !config.apiKey
+      ? 'ERROR: ZAI_API_KEY is not set. On Vercel, add it as an environment variable.'
+      : 'Config looks OK. If chat still fails, check that the API server is reachable and credentials are valid.',
   }, null, 2), {
     headers: { 'Content-Type': 'application/json' },
   });
@@ -84,21 +70,30 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const config = await ensureConfig();
+    const config = buildConfig();
 
     if (!config.baseUrl) {
       return new Response(
         JSON.stringify({
-          error: 'No API base URL configured. On Vercel, set the ZAI_BASE_URL environment variable to the public URL of your API server.',
+          error: 'ZAI_BASE_URL is not configured. On Vercel, set the ZAI_BASE_URL environment variable to the public API URL (e.g. https://z.ai/api/v1).',
         }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    if (!config.chatId || !config.token) {
+    if (!config.apiKey) {
       return new Response(
         JSON.stringify({
-          error: 'Missing chatId or token. Set ZAI_CHAT_ID and ZAI_TOKEN environment variables.',
+          error: 'ZAI_API_KEY is not configured. On Vercel, set the ZAI_API_KEY environment variable.',
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!config.chatId) {
+      return new Response(
+        JSON.stringify({
+          error: 'ZAI_CHAT_ID is not configured. On Vercel, set the ZAI_CHAT_ID environment variable.',
         }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
