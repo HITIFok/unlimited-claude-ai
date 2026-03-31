@@ -120,19 +120,95 @@ export async function GET() {
     }
   } else {
     info.envVars = {
-      ZAI_PUBLIC_API_KEY: process.env.ZAI_PUBLIC_API_KEY ? 'SET' : 'NOT SET (required)',
+      ZAI_PUBLIC_API_KEY: process.env.ZAI_PUBLIC_API_KEY ? `SET (${process.env.ZAI_PUBLIC_API_KEY.substring(0, 10)}...)` : 'NOT SET (required)',
       ZAI_PUBLIC_BASE_URL: process.env.ZAI_PUBLIC_BASE_URL || 'DEFAULT (https://api.z.ai/api/paas/v4)',
     };
     if (!process.env.ZAI_PUBLIC_API_KEY) {
       info.advice = 'ERROR: ZAI_PUBLIC_API_KEY is not set. Go to https://z.ai → API Keys → Create API Key, then add it as a Vercel environment variable.';
     } else {
-      info.advice = 'Config looks OK. Using Z.ai public API. If chat still fails, verify your API key is valid at https://z.ai.';
+      info.advice = 'Config looks OK. Using Z.ai public API. If chat still fails, visit /api/chat?action=test to run a live API test.';
     }
   }
 
   return new Response(JSON.stringify(info, null, 2), {
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+// Live API test endpoint — call /api/chat?action=test to diagnose issues
+export async function PUT(request: NextRequest) {
+  try {
+    const mode = await detectMode();
+    const step: string[] = [];
+    step.push(`Mode detected: ${mode}`);
+
+    if (mode === 'public') {
+      const apiKey = process.env.ZAI_PUBLIC_API_KEY;
+      const baseUrl = process.env.ZAI_PUBLIC_BASE_URL || 'https://api.z.ai/api/paas/v4';
+      step.push(`API Key: ${apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'}`);
+      step.push(`Base URL: ${baseUrl}`);
+
+      const url = `${baseUrl}/chat/completions`;
+      step.push(`Test URL: ${url}`);
+
+      step.push('Sending test request to Z.ai API...');
+      const startTime = Date.now();
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'Accept-Language': 'en-US,en',
+        },
+        body: JSON.stringify({
+          model: 'glm-4-flash',
+          messages: [{ role: 'user', content: 'Say hi' }],
+          max_tokens: 5,
+          stream: false,
+        }),
+      });
+      const elapsed = Date.now() - startTime;
+      step.push(`Response status: ${response.status} (${elapsed}ms)`);
+      step.push(`Response headers: Content-Type=${response.headers.get('content-type')}`);
+
+      const bodyText = await response.text();
+      step.push(`Response body: ${bodyText.substring(0, 500)}`);
+
+      if (!response.ok) {
+        step.push('RESULT: FAIL — API returned an error. Check your API key.');
+      } else {
+        step.push('RESULT: SUCCESS — API is working!');
+      }
+    } else {
+      step.push('Platform mode — testing with SDK...');
+      try {
+        const ZAI = (await import('z-ai-web-dev-sdk')).default;
+        const zai = await ZAI.create();
+        const result = await zai.chat.completions.create({
+          messages: [{ role: 'user', content: 'Say hi' }],
+          max_tokens: 5,
+        });
+        step.push(`SDK result: ${JSON.stringify(result).substring(0, 300)}`);
+        step.push('RESULT: SUCCESS — SDK is working!');
+      } catch (e: any) {
+        step.push(`SDK error: ${e.message}`);
+        step.push('RESULT: FAIL — SDK error.');
+      }
+    }
+
+    return new Response(JSON.stringify({ status: 'test', steps: step }, null, 2), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error: any) {
+    return new Response(JSON.stringify({
+      status: 'test-error',
+      error: error.message,
+      stack: error.stack?.split('\n').slice(0, 5),
+    }, null, 2), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 }
 
 export async function POST(request: NextRequest) {
