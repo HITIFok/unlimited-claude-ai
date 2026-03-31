@@ -219,7 +219,8 @@ export default function SuperZInterface() {
       try {
         const userId = await ensureAuth();
         setFirebaseUserId(userId);
-      } catch {\n        // Firebase not configured — cloud sync disabled, app works with local storage
+      } catch {
+        // Firebase not configured — cloud sync disabled, app works with local storage
       }
     };
     initFirebase();
