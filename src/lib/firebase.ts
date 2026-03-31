@@ -26,9 +26,9 @@ if (isFirebaseConfigured) {
 
 export { db, auth, isFirebaseConfigured };
 
-// Sign in anonymously and return the user ID
-export async function ensureAuth(): Promise<string> {
-  if (!auth) throw new Error('Firebase is not configured');
+// Sign in anonymously and return the user ID. Returns null if Firebase is not configured.
+export async function ensureAuth(): Promise<string | null> {
+  if (!auth) return null;
   return new Promise((resolve, reject) => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       unsub();
