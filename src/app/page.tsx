@@ -49,17 +49,17 @@ async function pdfToImages(att: { base64: string; name: string }): Promise<{ tex
     }
 
     // 3) Scanned PDF → render each page as image for vision
+    // Vercel Hobby limit: 1MB body → must be very aggressive with compression
     const images: string[] = [];
-    const MAX_PAGES = 5;
-    const MAX_DIM = 1024; // max width/height to keep payload small
+    const MAX_PAGES = 2;
+    const MAX_DIM = 640;
     let totalBytes = 0;
-    const MAX_TOTAL_BYTES = 3 * 1024 * 1024; // 3MB budget (Vercel limit ~4.5MB)
+    const MAX_TOTAL_BYTES = 500 * 1024; // 500KB budget (leaves room for JSON + system prompt)
 
     for (let i = 1; i <= Math.min(pdf.numPages, MAX_PAGES); i++) {
       if (totalBytes >= MAX_TOTAL_BYTES) break;
       const page = await pdf.getPage(i);
       const origViewport = page.getViewport({ scale: 1 });
-      // Scale down to fit MAX_DIM
       const scale = Math.min(1, MAX_DIM / Math.max(origViewport.width, origViewport.height));
       const viewport = page.getViewport({ scale });
       const canvas = document.createElement('canvas');
@@ -70,8 +70,14 @@ async function pdfToImages(att: { base64: string; name: string }): Promise<{ tex
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport }).promise;
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.55);
-      const imgBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+      // Start at low quality, increase only if under budget
+      let dataUrl = canvas.toDataURL('image/jpeg', 0.35);
+      let imgBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+      // If single image is over 400KB, try even lower quality
+      if (imgBytes > 400 * 1024) {
+        dataUrl = canvas.toDataURL('image/jpeg', 0.2);
+        imgBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+      }
       totalBytes += imgBytes;
       images.push(dataUrl);
       canvas.remove();
