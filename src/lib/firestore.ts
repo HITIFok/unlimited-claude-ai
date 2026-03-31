@@ -30,6 +30,17 @@ function isReady(): boolean {
   return isFirebaseConfigured && db !== null;
 }
 
+/** Recursively strip undefined values — Firestore rejects them */
+function stripUndefined(obj: any): any {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(stripUndefined);
+  const clean: Record<string, any> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined) clean[key] = stripUndefined(val);
+  }
+  return clean;
+}
+
 /**
  * Save a conversation to Firestore under users/{uid}/conversations/{convId}
  */
@@ -40,7 +51,7 @@ export async function saveConversation(
   if (!isReady()) return;
   const docRef = doc(db!, 'users', userId, CONVERSATIONS_SUBCOLLECTION, conversation.id);
   const dataToSave = {
-    ...conversation,
+    ...stripUndefined(conversation),
     timestamp: Timestamp.fromDate(new Date(conversation.timestamp)),
   };
   await setDoc(docRef, dataToSave, { merge: true });
