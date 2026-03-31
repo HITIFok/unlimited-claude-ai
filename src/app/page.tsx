@@ -49,12 +49,11 @@ async function pdfToImages(att: { base64: string; name: string }): Promise<{ tex
     }
 
     // 3) Scanned PDF → render each page as image for vision
-    // Vercel Hobby limit: 1MB body → must be very aggressive with compression
     const images: string[] = [];
-    const MAX_PAGES = 2;
-    const MAX_DIM = 640;
+    const MAX_PAGES = 5;
+    const MAX_DIM = 1024;
     let totalBytes = 0;
-    const MAX_TOTAL_BYTES = 500 * 1024; // 500KB budget (leaves room for JSON + system prompt)
+    const MAX_TOTAL_BYTES = 3 * 1024 * 1024; // 3MB budget
 
     for (let i = 1; i <= Math.min(pdf.numPages, MAX_PAGES); i++) {
       if (totalBytes >= MAX_TOTAL_BYTES) break;
@@ -70,12 +69,10 @@ async function pdfToImages(att: { base64: string; name: string }): Promise<{ tex
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport }).promise;
-      // Start at low quality, increase only if under budget
-      let dataUrl = canvas.toDataURL('image/jpeg', 0.35);
+      let dataUrl = canvas.toDataURL('image/jpeg', 0.7);
       let imgBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
-      // If single image is over 400KB, try even lower quality
-      if (imgBytes > 400 * 1024) {
-        dataUrl = canvas.toDataURL('image/jpeg', 0.2);
+      if (imgBytes > 800 * 1024) {
+        dataUrl = canvas.toDataURL('image/jpeg', 0.4);
         imgBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
       }
       totalBytes += imgBytes;
@@ -887,12 +884,25 @@ export default function SuperZInterface() {
         requestBody.temperature = 1;
         setShowThinkingIndicator(true);
       }
-      // Call Super Z API (backend route using z-ai-web-dev-sdk)
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      });
+      // Call Super Z API
+      // If has images (vision): call Z.ai space directly to bypass Vercel 1MB body limit
+      // If text only: go through Vercel /api/chat proxy (works fine)
+      const isVercel = window.location.hostname.includes('vercel.app');
+      let response: Response;
+
+      if (hasAnyImages && isVercel) {
+        response = await fetch('https://preview-chat-1fe5ba1f-5e1b-487c-9022-b3c2f9413bf7.space.z.ai/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+      } else {
+        response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+      }
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
         throw new Error(errData.error || `Server error ${response.status}`);
