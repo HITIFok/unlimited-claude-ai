@@ -49,11 +49,12 @@ async function pdfToImages(att: { base64: string; name: string }): Promise<{ tex
     }
 
     // 3) Scanned PDF → render each page as image for vision
+    // Must be very small: Z.ai serverless has strict limits
     const images: string[] = [];
-    const MAX_PAGES = 5;
-    const MAX_DIM = 1024;
+    const MAX_PAGES = 3;
+    const MAX_DIM = 512;
     let totalBytes = 0;
-    const MAX_TOTAL_BYTES = 3 * 1024 * 1024; // 3MB budget
+    const MAX_TOTAL_BYTES = 800 * 1024; // 800KB total
 
     for (let i = 1; i <= Math.min(pdf.numPages, MAX_PAGES); i++) {
       if (totalBytes >= MAX_TOTAL_BYTES) break;
@@ -69,10 +70,11 @@ async function pdfToImages(att: { base64: string; name: string }): Promise<{ tex
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport }).promise;
-      let dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+      let dataUrl = canvas.toDataURL('image/jpeg', 0.5);
       let imgBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
-      if (imgBytes > 800 * 1024) {
-        dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+      // If single image > 300KB, shrink further
+      if (imgBytes > 300 * 1024) {
+        dataUrl = canvas.toDataURL('image/jpeg', 0.3);
         imgBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
       }
       totalBytes += imgBytes;
@@ -888,14 +890,37 @@ export default function SuperZInterface() {
       // If has images (vision): call Z.ai space directly to bypass Vercel 1MB body limit
       // If text only: go through Vercel /api/chat proxy (works fine)
       const isVercel = window.location.hostname.includes('vercel.app');
+      const ZAI_DIRECT = 'https://preview-chat-1fe5ba1f-5e1b-487c-9022-b3c2f9413bf7.space.z.ai';
       let response: Response;
 
       if (hasAnyImages && isVercel) {
-        response = await fetch('https://preview-chat-1fe5ba1f-5e1b-487c-9022-b3c2f9413bf7.space.z.ai/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-        });
+        // Try vision via Z.ai direct
+        try {
+          response = await fetch(`${ZAI_DIRECT}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+          });
+        } catch (visionErr: any) {
+          // Z.ai vision failed (timeout, chunked error) → fallback: strip images, send text-only via Vercel
+          console.warn('[Super Z] Vision failed, falling back to text-only:', visionErr.message);
+          const textOnlyMessages = apiMessages.map(msg => {
+            if (Array.isArray(msg.content)) {
+              return { role: msg.role, content: msg.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n') };
+            }
+            return msg;
+          });
+          const fallbackBody = { ...requestBody, messages: textOnlyMessages, vision: false };
+          response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(fallbackBody),
+          });
+          // Prepend a note about the fallback
+          if (response.ok) {
+            const preNote = addMessageToDOM('⚠️ Impossible de traiter les images via le serveur distant. Réponse basée sur le texte uniquement :\n\n', 'assistant');
+          }
+        }
       } else {
         response = await fetch('/api/chat', {
           method: 'POST',
