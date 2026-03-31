@@ -1,6 +1,14 @@
 import { NextRequest } from 'next/server';
-import { readFile } from 'fs/promises';
 import ZAI from 'z-ai-web-dev-sdk';
+
+// ──────────────────────────────────────────────
+// Z.ai Proxy URL — used on Vercel (no internal API access)
+// On Z.ai platform: SDK is used directly (free, fast)
+// On Vercel: requests are proxied to the Z.ai space
+// ──────────────────────────────────────────────
+const ZAI_PROXY_URL = 'https://preview-chat-1fe5ba1f-5e1b-487c-9022-b3c2f9413bf7.space.z.ai';
+
+const isVercel = !!process.env.VERCEL;
 
 // Model name mapping (Super Z display names → internal API names)
 const MODEL_MAP: Record<string, string> = {
@@ -15,6 +23,44 @@ const MODEL_MAP: Record<string, string> = {
   'sz-3-5-haiku': 'claude-3-5-haiku',
 };
 
+// ──────────────────────────────────────────────
+// MODE: Proxy to Z.ai space (Vercel)
+// ──────────────────────────────────────────────
+async function proxyToZAI(body: Record<string, any>) {
+  const res = await fetch(`${ZAI_PROXY_URL}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `Z.ai proxy error ${res.status}`);
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+
+  // If streaming response, pipe it through
+  if (contentType.includes('text/event-stream') && res.body) {
+    return new Response(res.body, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
+  }
+
+  // Non-streaming JSON response
+  const data = await res.json();
+  return new Response(JSON.stringify(data), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+// ──────────────────────────────────────────────
+// MODE: Direct SDK (Z.ai platform)
+// ──────────────────────────────────────────────
 let zaiInstance: any = null;
 
 async function getZAI() {
@@ -43,28 +89,52 @@ function streamResponse(result: ReadableStream) {
   });
 }
 
+// ──────────────────────────────────────────────
+// GET: health check
+// ──────────────────────────────────────────────
 export async function GET() {
+  if (isVercel) {
+    // On Vercel: check if Z.ai proxy is reachable
+    try {
+      const res = await fetch(`${ZAI_PROXY_URL}/api/chat`, { method: 'GET' });
+      const data = await res.json();
+      return new Response(JSON.stringify({ status: 'ok', mode: 'vercel-proxy', proxy: data }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (e: any) {
+      return new Response(JSON.stringify({ status: 'error', mode: 'vercel-proxy', message: e.message }), {
+        status: 500, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  // On Z.ai: check SDK
   try {
     const zai = await getZAI();
-    const result = await zai.chat.completions.create({
-      messages: [{ role: 'user', content: 'hi' }],
-      max_tokens: 3,
-    });
-    return new Response(JSON.stringify({ status: 'ok', message: 'Super Z API is running. AI is working.' }), {
+    return new Response(JSON.stringify({ status: 'ok', mode: 'zai-sdk', message: 'Super Z API is running.' }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (e: any) {
-    return new Response(JSON.stringify({ status: 'error', message: e.message }), {
+    return new Response(JSON.stringify({ status: 'error', mode: 'zai-sdk', message: e.message }), {
       status: 500, headers: { 'Content-Type': 'application/json' },
     });
   }
 }
 
+// ──────────────────────────────────────────────
+// POST: chat completion
+// ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { messages, model, system, max_tokens, temperature, thinking, vision } = body;
 
+    // ── Vercel mode: proxy to Z.ai space ──
+    if (isVercel) {
+      return await proxyToZAI(body);
+    }
+
+    // ── Z.ai platform mode: use SDK directly ──
     const zai = await getZAI();
 
     // Build messages array
