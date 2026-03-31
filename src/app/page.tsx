@@ -213,14 +213,13 @@ export default function SuperZInterface() {
   // Ref to always have the latest conversation ID (avoids stale closure in async functions)
   const currentConversationIdRef = useRef<string | null>(null);
 
-  // Initialize Firebase auth and load conversations
+  // Initialize Firebase auth and load conversations (optional, silent if not configured)
   useEffect(() => {
     const initFirebase = async () => {
       try {
         const userId = await ensureAuth();
         setFirebaseUserId(userId);
-      } catch (err) {
-        console.error('Firebase auth failed:', err);
+      } catch {\n        // Firebase not configured — cloud sync disabled, app works with local storage
       }
     };
     initFirebase();
