@@ -1,5 +1,4 @@
 import { NextRequest } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
 
 // Translate internal Super Z model names to API model names
 const MODEL_MAP: Record<string, string> = {
@@ -14,35 +13,31 @@ const MODEL_MAP: Record<string, string> = {
   'sz-3-5-haiku': 'claude-3-5-haiku',
 };
 
-let zaiInstance: any = null;
-
-function getZAIConfig() {
+function getConfig() {
   return {
     baseUrl: process.env.ZAI_BASE_URL || 'https://z-ai-web-dev.z.ai/v1',
     apiKey: process.env.ZAI_API_KEY || 'Z.ai',
-    chatId: process.env.ZAI_CHAT_ID,
-    token: process.env.ZAI_TOKEN,
+    chatId: process.env.ZAI_CHAT_ID || '',
+    token: process.env.ZAI_TOKEN || '',
   };
-}
-
-async function getZAI() {
-  if (!zaiInstance) {
-    const config = getZAIConfig();
-    if (!config.chatId || !config.token) {
-      throw new Error('Missing ZAI_CHAT_ID or ZAI_TOKEN environment variables');
-    }
-    zaiInstance = new ZAI(config);
-  }
-  return zaiInstance;
 }
 
 export async function POST(request: NextRequest) {
   try {
+    const config = getConfig();
+
+    if (!config.chatId || !config.token) {
+      console.error('[Super Z API] Missing ZAI_CHAT_ID or ZAI_TOKEN env vars');
+      return new Response(
+        JSON.stringify({ error: 'API not configured. Please set ZAI_CHAT_ID and ZAI_TOKEN environment variables.' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const body = await request.json();
     const { messages, model, system, max_tokens, temperature, thinking, vision } = body;
 
-    const zai = await getZAI();
-
+    // Build API messages
     const apiMessages: any[] = [];
     if (system) {
       apiMessages.push({ role: 'system', content: system });
@@ -67,22 +62,54 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const chatBody: any = { messages: apiMessages, stream: true };
-    if (model) chatBody.model = MODEL_MAP[model] || model;
-    if (max_tokens) chatBody.max_tokens = max_tokens;
-    if (temperature !== undefined) chatBody.temperature = temperature;
-    if (thinking) chatBody.thinking = thinking;
+    // Map model name
+    const apiModel = model ? (MODEL_MAP[model] || model) : 'claude-sonnet-4-6';
 
-    let result;
-    if (vision) {
-      result = await zai.chat.completions.createVision(chatBody);
-    } else {
-      result = await zai.chat.completions.create(chatBody);
+    // Build request body
+    const requestBody: any = {
+      messages: apiMessages,
+      model: apiModel,
+      stream: true,
+    };
+    if (max_tokens) requestBody.max_tokens = max_tokens;
+    if (temperature !== undefined) requestBody.temperature = temperature;
+    // Default to disabled thinking unless explicitly enabled
+    requestBody.thinking = thinking || { type: 'disabled' };
+
+    // Build headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`,
+      'X-Z-AI-From': 'Z',
+      'X-Chat-Id': config.chatId,
+      'X-Token': config.token,
+    };
+
+    // Choose endpoint
+    const url = vision
+      ? `${config.baseUrl}/chat/completions/vision`
+      : `${config.baseUrl}/chat/completions`;
+
+    console.log(`[Super Z API] Calling ${url} with model=${apiModel}, messages=${apiMessages.length}`);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Super Z API] Error ${response.status}: ${errorText}`);
+      return new Response(
+        JSON.stringify({ error: `API returned ${response.status}: ${errorText.substring(0, 500)}` }),
+        { status: response.status, headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
-    // SDK returns ReadableStream for streaming
-    if (result instanceof ReadableStream) {
-      return new Response(result, {
+    // Stream the response back to the client
+    if (response.body) {
+      return new Response(response.body, {
         headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
@@ -91,11 +118,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    return new Response(JSON.stringify(result), {
+    // Fallback: return JSON
+    const json = await response.json();
+    return new Response(JSON.stringify(json), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error: any) {
-    console.error('Chat API error:', error);
+    console.error('[Super Z API] Unhandled error:', error);
     return new Response(
       JSON.stringify({ error: error.message || 'Internal server error' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
